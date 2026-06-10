@@ -1,0 +1,9 @@
+mistralai
+pydub
+ffmpeg-python
+pydantic
+ruff
+black
+pytest
+rich
+asyncio
