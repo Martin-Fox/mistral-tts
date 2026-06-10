@@ -49,11 +49,10 @@ class BooksmithTUI(App):
 
     TITLE = "Mistral-TTS-Booksmith"
     DEFAULT_VOICES = [
-        ("Paul (Male)", "paul"),
-        ("English Male (US)", "mistral-en-001"),
-        ("English Female (US)", "mistral-en-002"),
-        ("English Male (UK)", "mistral-en-003"),
-        ("English Female (UK)", "mistral-en-004"),
+        ("Paul (Male - Neutral)", "en_paul_neutral"),
+        ("Sarah (Female - Expressive)", "en_sarah_expressive"),
+        ("Mistral Male (US)", "mistral-en-001"),
+        ("Mistral Female (US)", "mistral-en-002"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -185,7 +184,7 @@ class BooksmithTUI(App):
                 self.log_message("Attempting to fetch available voices...")
                 voices = await client.list_voices()
                 if voices:
-                    voice_str = ", ".join([f"{v['name']} ({v['id']})" for v in voices])
+                    voice_str = ", ".join([f"ID: {v['id']} (Name: {v['name']})" for v in voices])
                     self.log_message(f"Available voices: {voice_str}")
                 else:
                     self.log_message("Could not fetch available voices.")
