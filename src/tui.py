@@ -49,6 +49,7 @@ class BooksmithTUI(App):
 
     TITLE = "Mistral-TTS-Booksmith"
     DEFAULT_VOICES = [
+        ("Paul (Male)", "paul"),
         ("English Male (US)", "mistral-en-001"),
         ("English Female (US)", "mistral-en-002"),
         ("English Male (UK)", "mistral-en-003"),
