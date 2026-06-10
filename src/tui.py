@@ -16,6 +16,11 @@ class BooksmithTUI(App):
         margin-bottom: 1;
         height: auto;
     }
+    .form-row {
+        height: 3;
+        margin-bottom: 0;
+        align: left middle;
+    }
     .form-label {
         width: 15;
         content-align: right middle;
@@ -30,14 +35,14 @@ class BooksmithTUI(App):
         background: green;
     }
     #progress-container {
-        margin-top: 2;
+        margin-top: 1;
         border: solid gray;
         padding: 1;
         height: auto;
     }
     Log {
         margin-top: 1;
-        height: 10;
+        height: 8;
         border: solid gray;
     }
     """
@@ -54,23 +59,23 @@ class BooksmithTUI(App):
         yield Header()
         with Container():
             with Vertical(classes="form-group"):
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Label("Text Path:", classes="form-label")
                     yield Input(placeholder="path/to/text.txt", id="text-path")
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Label("Default Voice:", classes="form-label")
                     yield Select(self.DEFAULT_VOICES, prompt="Select a default voice", id="voice-select")
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Label("OR Voice Path:", classes="form-label")
                     yield Input(placeholder="path/to/voice.mp3 (for cloning)", id="voice-path")
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Label("Output Path:", classes="form-label")
                     yield Input(value="storage/output/audiobook.mp3", id="output-path")
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Label("API Key:", classes="form-label")
                     yield Input(placeholder="Mistral AI API Key", password=True, id="api-key")
-            
-            yield Button("Start Generation", variant="success", id="start-btn")
+                
+                yield Button("Start Generation", variant="success", id="start-btn")
             
             with Vertical(id="progress-container"):
                 yield Label("Overall Progress:")
