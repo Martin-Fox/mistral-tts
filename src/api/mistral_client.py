@@ -15,9 +15,18 @@ class MistralTTSClient:
 
     def __init__(self, api_key: str):
         self.client = Mistral(api_key=api_key.strip())
-        self.model = "mistral-tts-latest"
+        self.model = "voxtral-mini-tts-2603"
         self.voice_sample_path: Optional[Path] = None
         self.voice_id: Optional[str] = None
+
+    async def list_models(self) -> list:
+        """Lists available models from the Mistral API."""
+        try:
+            response = await self.client.models.list_async()
+            return [m.id for m in response.data]
+        except Exception as e:
+            logger.warning(f"Failed to fetch models from API: {e}")
+            return []
 
     async def list_voices(self) -> list:
         """
