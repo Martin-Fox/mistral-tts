@@ -49,10 +49,10 @@ class BooksmithTUI(App):
 
     TITLE = "Mistral-TTS-Booksmith"
     DEFAULT_VOICES = [
-        ("George (Male)", "george"),
-        ("Jessica (Female)", "jessica"),
-        ("Emma (Female)", "emma"),
-        ("Marc (Male)", "marc"),
+        ("English Male (US)", "mistral-en-001"),
+        ("English Female (US)", "mistral-en-002"),
+        ("English Male (UK)", "mistral-en-003"),
+        ("English Female (UK)", "mistral-en-004"),
     ]
 
     def compose(self) -> ComposeResult:

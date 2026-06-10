@@ -40,10 +40,10 @@ class MistralTTSClient:
             logger.warning(f"Failed to fetch voices from API: {e}")
             # Fallback to some common defaults if API fails or key is missing
             return [
-                {"id": "george", "name": "George (Male)"},
-                {"id": "jessica", "name": "Jessica (Female)"},
-                {"id": "emma", "name": "Emma (Female)"},
-                {"id": "marc", "name": "Marc (Male)"},
+                {"id": "mistral-en-001", "name": "English Male (US)"},
+                {"id": "mistral-en-002", "name": "English Female (US)"},
+                {"id": "mistral-en-003", "name": "English Male (UK)"},
+                {"id": "mistral-en-004", "name": "English Female (UK)"},
             ]
 
     def set_voice_id(self, voice_id: str):
