@@ -96,12 +96,22 @@ class BooksmithCLI:
 
 async def main():
     parser = argparse.ArgumentParser(description="Mistral-TTS-Booksmith CLI")
-    parser.add_argument("--text", type=str, required=True, help="Path to input text file")
-    parser.add_argument("--voice", type=str, required=True, help="Path to reference voice sample")
-    parser.add_argument("--output", type=str, required=True, help="Path to output audiobook file")
-    parser.add_argument("--api-key", type=str, required=True, help="Mistral AI API Key")
+    parser.add_argument("--text", type=str, required=False, help="Path to input text file")
+    parser.add_argument("--voice", type=str, required=False, help="Path to reference voice sample")
+    parser.add_argument("--output", type=str, required=False, help="Path to output audiobook file")
+    parser.add_argument("--api-key", type=str, required=False, help="Mistral AI API Key")
+    parser.add_argument("--tui", action="store_true", help="Launch the TUI")
 
     args = parser.parse_args()
+
+    if args.tui:
+        from src.tui import BooksmithTUI
+        app = BooksmithTUI()
+        await app.run_async()
+        return
+
+    if not all([args.text, args.voice, args.output, args.api_key]):
+        parser.error("The following arguments are required if --tui is not used: --text, --voice, --output, --api-key")
 
     cli = BooksmithCLI(api_key=args.api_key)
     try:

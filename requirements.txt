@@ -7,3 +7,4 @@ black
 pytest
 rich
 asyncio
+textual
