@@ -67,6 +67,9 @@ class BooksmithTUI(App):
                     yield Label("Default Voice:", classes="form-label")
                     yield Select(self.DEFAULT_VOICES, prompt="Select a default voice", id="voice-select")
                 with Horizontal(classes="form-row"):
+                    yield Label("Manual Voice ID:", classes="form-label")
+                    yield Input(placeholder="e.g. paul, mistral-en-001", id="manual-voice-id")
+                with Horizontal(classes="form-row"):
                     yield Label("OR Voice Path:", classes="form-label")
                     yield Input(placeholder="path/to/voice.mp3 (for cloning)", id="voice-path")
                 with Horizontal(classes="form-row"):
@@ -97,6 +100,7 @@ class BooksmithTUI(App):
         text_path = self.query_one("#text-path", Input).value.strip()
         voice_path = self.query_one("#voice-path", Input).value.strip()
         voice_id = self.query_one("#voice-select", Select).value
+        manual_voice_id = self.query_one("#manual-voice-id", Input).value.strip()
         output_path = self.query_one("#output-path", Input).value.strip()
         api_key = self.query_one("#api-key", Input).value.strip()
 
@@ -104,13 +108,16 @@ class BooksmithTUI(App):
             self.log_message("Error: Text Path, Output Path, and API Key are required.")
             return
 
-        if not voice_path and voice_id is Select.BLANK:
-            self.log_message("Error: Either a Default Voice must be selected or a Voice Path provided.")
+        # Priority: Manual ID > Select List > Voice Path
+        final_voice_id = manual_voice_id if manual_voice_id else (voice_id if voice_id is not Select.BLANK else None)
+
+        if not voice_path and not final_voice_id:
+            self.log_message("Error: A Voice ID (selected or manual) or a Voice Path must be provided.")
             return
 
         self.query_one("#start-btn", Button).disabled = True
         self.query_one("#status-label", Static).update("Status: Initializing...")
-        self.run_worker(self.process_book(text_path, voice_path, voice_id, output_path, api_key))
+        self.run_worker(self.process_book(text_path, voice_path, final_voice_id, output_path, api_key))
 
     async def process_book(self, text_path: str, voice_path: str, voice_id: str, output_path: str, api_key: str):
         try:
