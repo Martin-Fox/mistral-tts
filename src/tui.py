@@ -165,6 +165,13 @@ class BooksmithTUI(App):
             
         except Exception as e:
             self.log_message(f"Error: {str(e)}")
+            if "invalid model" in str(e).lower():
+                self.log_message("Attempting to fetch available models...")
+                models = await client.list_models()
+                if models:
+                    self.log_message(f"Available models: {', '.join(models)}")
+                else:
+                    self.log_message("Could not fetch available models.")
             self.query_one("#status-label", Static).update("Status: Error")
         finally:
             self.query_one("#start-btn", Button).disabled = False
