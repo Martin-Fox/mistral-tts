@@ -93,11 +93,11 @@ class BooksmithTUI(App):
         self.query_one("#log", Log).write_line(message)
 
     def start_processing(self):
-        text_path = self.query_one("#text-path", Input).value
-        voice_path = self.query_one("#voice-path", Input).value
+        text_path = self.query_one("#text-path", Input).value.strip()
+        voice_path = self.query_one("#voice-path", Input).value.strip()
         voice_id = self.query_one("#voice-select", Select).value
-        output_path = self.query_one("#output-path", Input).value
-        api_key = self.query_one("#api-key", Input).value
+        output_path = self.query_one("#output-path", Input).value.strip()
+        api_key = self.query_one("#api-key", Input).value.strip()
 
         if not text_path or not output_path or not api_key:
             self.log_message("Error: Text Path, Output Path, and API Key are required.")

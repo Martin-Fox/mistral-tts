@@ -113,9 +113,9 @@ async def main():
     if not all([args.text, args.voice, args.output, args.api_key]):
         parser.error("The following arguments are required if --tui is not used: --text, --voice, --output, --api-key")
 
-    cli = BooksmithCLI(api_key=args.api_key)
+    cli = BooksmithCLI(api_key=args.api_key.strip())
     try:
-        await cli.run(Path(args.text), Path(args.voice), Path(args.output))
+        await cli.run(Path(args.text.strip()), Path(args.voice.strip() if args.voice else ""), Path(args.output.strip()))
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
 
