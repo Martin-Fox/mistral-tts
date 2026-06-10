@@ -15,7 +15,7 @@ class MistralTTSClient:
 
     def __init__(self, api_key: str):
         self.client = Mistral(api_key=api_key.strip())
-        self.model = "voxtral-tts-26-03"
+        self.model = "mistral-tts-latest"
         self.voice_sample_path: Optional[Path] = None
         self.voice_id: Optional[str] = None
 
