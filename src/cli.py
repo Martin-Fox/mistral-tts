@@ -2,7 +2,9 @@ import asyncio
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 from rich.panel import Panel
@@ -95,14 +97,17 @@ class BooksmithCLI:
         console.print(Panel(f"[bold green]Success![/bold green] Audiobook saved to: [underline]{output_path}[/underline]"))
 
 async def main():
+    load_dotenv()
+    
     parser = argparse.ArgumentParser(description="Mistral-TTS-Booksmith CLI")
     parser.add_argument("--text", type=str, required=False, help="Path to input text file")
     parser.add_argument("--voice", type=str, required=False, help="Path to reference voice sample")
     parser.add_argument("--output", type=str, required=False, help="Path to output audiobook file")
-    parser.add_argument("--api-key", type=str, required=False, help="Mistral AI API Key")
+    parser.add_argument("--api-key", type=str, required=False, help="Mistral AI API Key (overrides MISTRAL_API_KEY in .env)")
     parser.add_argument("--tui", action="store_true", help="Launch the TUI")
 
     args = parser.parse_args()
+    api_key = args.api_key or os.getenv("MISTRAL_API_KEY")
 
     if args.tui:
         from src.tui import BooksmithTUI
@@ -110,10 +115,10 @@ async def main():
         await app.run_async()
         return
 
-    if not all([args.text, args.voice, args.output, args.api_key]):
-        parser.error("The following arguments are required if --tui is not used: --text, --voice, --output, --api-key")
+    if not all([args.text, args.voice, args.output, api_key]):
+        parser.error("The following arguments are required if --tui is not used and MISTRAL_API_KEY is not set: --text, --voice, --output, --api-key")
 
-    cli = BooksmithCLI(api_key=args.api_key.strip())
+    cli = BooksmithCLI(api_key=api_key.strip())
     try:
         await cli.run(Path(args.text.strip()), Path(args.voice.strip() if args.voice else ""), Path(args.output.strip()))
     except Exception as e:

@@ -8,3 +8,4 @@ pytest
 rich
 asyncio
 textual
+python-dotenv

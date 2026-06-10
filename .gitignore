@@ -1,2 +1,7 @@
 # Others
 ai_light/
+.env
+.env.*
+storage/
+__pycache__/
+*.pyc

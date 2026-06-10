@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, Input, Button, Label, ProgressBar, Log, Static, Select
@@ -56,6 +58,9 @@ class BooksmithTUI(App):
     ]
 
     def compose(self) -> ComposeResult:
+        load_dotenv()
+        api_key = os.getenv("MISTRAL_API_KEY", "")
+        
         yield Header()
         with Container():
             with Vertical(classes="form-group"):
@@ -76,7 +81,7 @@ class BooksmithTUI(App):
                     yield Input(value="storage/output/audiobook.mp3", id="output-path")
                 with Horizontal(classes="form-row"):
                     yield Label("API Key:", classes="form-label")
-                    yield Input(placeholder="Mistral AI API Key", password=True, id="api-key")
+                    yield Input(value=api_key, placeholder="Mistral AI API Key", password=True, id="api-key")
                 
                 yield Button("Start Generation", variant="success", id="start-btn")
             
