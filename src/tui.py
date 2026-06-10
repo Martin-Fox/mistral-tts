@@ -172,6 +172,15 @@ class BooksmithTUI(App):
                     self.log_message(f"Available models: {', '.join(models)}")
                 else:
                     self.log_message("Could not fetch available models.")
+            
+            if "voice" in str(e).lower() and "not found" in str(e).lower():
+                self.log_message("Attempting to fetch available voices...")
+                voices = await client.list_voices()
+                if voices:
+                    voice_str = ", ".join([f"{v['name']} ({v['id']})" for v in voices])
+                    self.log_message(f"Available voices: {voice_str}")
+                else:
+                    self.log_message("Could not fetch available voices.")
             self.query_one("#status-label", Static).update("Status: Error")
         finally:
             self.query_one("#start-btn", Button).disabled = False
