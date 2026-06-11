@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
@@ -44,8 +45,15 @@ class BooksmithCLI:
         with open(self.manifest_path, "w") as f:
             json.dump(manifest, f, indent=4)
 
-    async def run(self, text_path: Path, voice_path: Path, output_path: Path):
+    async def run(self, text_path: Path, voice_path: Path, output_path: Path, source_lang: Optional[str] = None, target_lang: Optional[str] = None):
         console.print(Panel.fit("Mistral-TTS-Booksmith", style="bold magenta"))
+
+        # 0. Translate text if target language is specified
+        if target_lang:
+            source = source_lang or "English"
+            with console.status(f"[bold blue]Translating text from {source} to {target_lang}..."):
+                text_path = await self.client.translate_file(text_path, source, target_lang)
+                logger.info(f"Translation completed. Translated file: {text_path}")
 
         # 1. Read input text
         with console.status("[bold green]Reading input text..."):
@@ -105,6 +113,8 @@ async def main():
     parser.add_argument("--output", type=str, required=False, help="Path to output audiobook file")
     parser.add_argument("--api-key", type=str, required=False, help="Mistral AI API Key (overrides MISTRAL_API_KEY in .env)")
     parser.add_argument("--tui", action="store_true", help="Launch the TUI")
+    parser.add_argument("--source-lang", type=str, required=False, help="Source language of the input text")
+    parser.add_argument("--target-lang", type=str, required=False, help="Target language to translate the text into")
 
     args = parser.parse_args()
     api_key = args.api_key or os.getenv("MISTRAL_API_KEY")
@@ -120,7 +130,13 @@ async def main():
 
     cli = BooksmithCLI(api_key=api_key.strip())
     try:
-        await cli.run(Path(args.text.strip()), Path(args.voice.strip() if args.voice else ""), Path(args.output.strip()))
+        await cli.run(
+            Path(args.text.strip()), 
+            Path(args.voice.strip() if args.voice else ""), 
+            Path(args.output.strip()),
+            source_lang=args.source_lang.strip() if args.source_lang else None,
+            target_lang=args.target_lang.strip() if args.target_lang else None
+        )
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
 

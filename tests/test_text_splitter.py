@@ -20,3 +20,19 @@ def test_text_splitter_long_sentence():
 def test_text_splitter_empty():
     splitter = TextSplitter()
     assert splitter.split("") == []
+
+def test_text_splitter_srt():
+    splitter = TextSplitter()
+    srt_content = """1
+00:00:01,000 --> 00:00:04,000
+Hello, world!
+
+2
+00:00:05,000 --> 00:00:08,000
+This is a subtitle.
+And a second line.
+"""
+    chunks = splitter.split(srt_content)
+    # The text should be normalized and timings omitted
+    assert chunks == ["Hello, world! This is a subtitle. And a second line."]
+

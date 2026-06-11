@@ -19,6 +19,23 @@ class TextSplitter:
         """
         self.max_chars = max_chars
 
+    def _is_srt(self, text: str) -> bool:
+        """Helper to detect if the text content follows SRT format."""
+        return bool(re.match(r'^\s*\d+\s*\n\s*\d\d:\d\d:\d\d', text))
+
+    def extract_text_from_srt(self, srt_content: str) -> str:
+        """Extracts and joins only the text lines from an SRT file, omitting timing/indices."""
+        srt_content = srt_content.replace("\r\n", "\n")
+        raw_blocks = re.split(r'\n\s*\n', srt_content.strip())
+        text_pieces = []
+        for raw_block in raw_blocks:
+            lines = raw_block.strip().split('\n')
+            if len(lines) >= 3:
+                block_text = " ".join(lines[2:]).strip()
+                if block_text:
+                    text_pieces.append(block_text)
+        return " ".join(text_pieces)
+
     def split(self, text: str) -> List[str]:
         """
         Splits the input text into a list of semantic chunks.
@@ -31,6 +48,9 @@ class TextSplitter:
         """
         if not text:
             return []
+
+        if self._is_srt(text):
+            text = self.extract_text_from_srt(text)
 
         # Normalize whitespace
         text = re.sub(r'\s+', ' ', text).strip()

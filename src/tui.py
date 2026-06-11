@@ -68,6 +68,12 @@ class BooksmithTUI(App):
                     yield Label("Text Path:", classes="form-label")
                     yield Input(placeholder="path/to/text.txt", id="text-path")
                 with Horizontal(classes="form-row"):
+                    yield Label("Source Lang:", classes="form-label")
+                    yield Input(placeholder="e.g. English (optional)", id="source-lang")
+                with Horizontal(classes="form-row"):
+                    yield Label("Target Lang:", classes="form-label")
+                    yield Input(placeholder="e.g. Spanish (optional)", id="target-lang")
+                with Horizontal(classes="form-row"):
                     yield Label("Default Voice:", classes="form-label")
                     yield Select(self.DEFAULT_VOICES, prompt="Select a default voice", id="voice-select")
                 with Horizontal(classes="form-row"):
@@ -107,6 +113,8 @@ class BooksmithTUI(App):
         manual_voice_id = self.query_one("#manual-voice-id", Input).value.strip()
         output_path = self.query_one("#output-path", Input).value.strip()
         api_key = self.query_one("#api-key", Input).value.strip()
+        source_lang = self.query_one("#source-lang", Input).value.strip()
+        target_lang = self.query_one("#target-lang", Input).value.strip()
 
         if not text_path or not output_path or not api_key:
             self.log_message("Error: Text Path, Output Path, and API Key are required.")
@@ -121,9 +129,9 @@ class BooksmithTUI(App):
 
         self.query_one("#start-btn", Button).disabled = True
         self.query_one("#status-label", Static).update("Status: Initializing...")
-        self.run_worker(self.process_book(text_path, voice_path, final_voice_id, output_path, api_key))
+        self.run_worker(self.process_book(text_path, voice_path, final_voice_id, output_path, api_key, source_lang, target_lang))
 
-    async def process_book(self, text_path: str, voice_path: str, voice_id: str, output_path: str, api_key: str):
+    async def process_book(self, text_path: str, voice_path: str, voice_id: str, output_path: str, api_key: str, source_lang: str = "", target_lang: str = ""):
         try:
             tp = Path(text_path)
             op = Path(output_path)
@@ -138,6 +146,13 @@ class BooksmithTUI(App):
             splitter = TextSplitter()
             client = MistralTTSClient(api_key=api_key)
             compiler = AudioCompiler()
+
+            if target_lang:
+                source = source_lang if source_lang else "English"
+                self.query_one("#status-label", Static).update(f"Status: Translating to {target_lang}...")
+                self.log_message(f"Translating {tp.name} from {source} to {target_lang}...")
+                tp = await client.translate_file(tp, source, target_lang)
+                self.log_message(f"Translation completed. Saved to {tp}")
 
             self.log_message("Reading text and splitting into chunks...")
             with open(tp, "r") as f:

@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import base64
+import json
+import re
 from pathlib import Path
 from typing import Optional
 from mistralai.client import Mistral
@@ -122,3 +124,179 @@ class MistralTTSClient:
                 else:
                     logger.error(f"Failed to generate audio after {retry_count} attempts.")
                     raise
+
+    async def translate_text(self, text: str, source_lang: str, target_lang: str) -> str:
+        """
+        Translates a single block of text from source_lang to target_lang using Mistral Large.
+        """
+        prompt = (
+            f"You are a professional translator. Translate the following text from {source_lang} to {target_lang}. "
+            f"Maintain the tone, style, and flow of the original. "
+            f"Return ONLY the translated text. Do not add any introductory remarks, explanations, or formatting.\n\n"
+            f"Text to translate:\n{text}"
+        )
+        try:
+            response = await self.client.chat.complete_async(
+                model="mistral-large-latest",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            if response and response.choices:
+                return response.choices[0].message.content.strip()
+            raise ValueError("Empty response from translation API")
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+            raise
+
+    async def translate_file(self, input_path: Path, source_lang: str, target_lang: str) -> Path:
+        """
+        Translates a text or srt file and saves it in storage/translations/.
+        Returns the path to the translated file.
+        """
+        if not input_path.exists():
+            raise FileNotFoundError(f"Input file not found: {input_path}")
+
+        # Read input content
+        with open(input_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Normalize line endings
+        content = content.replace("\r\n", "\n")
+
+        # Determine file type and translate
+        is_srt = input_path.suffix.lower() == ".srt"
+        
+        # Prepare output directory
+        translations_dir = Path("storage/translations")
+        translations_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_filename = f"{input_path.stem}_translated_{target_lang.lower().replace(' ', '_')}{input_path.suffix}"
+        output_path = translations_dir / output_filename
+
+        if is_srt:
+            # Parse SRT blocks
+            raw_blocks = re.split(r'\n\s*\n', content.strip())
+            blocks = []
+            for raw_block in raw_blocks:
+                lines = raw_block.strip().split('\n')
+                if len(lines) >= 3:
+                    index = lines[0].strip()
+                    timecode = lines[1].strip()
+                    text = "\n".join(lines[2:]).strip()
+                    blocks.append({"index": index, "timecode": timecode, "text": text})
+                elif len(lines) > 0:
+                    # Malformed block or empty text
+                    index = lines[0].strip()
+                    timecode = lines[1].strip() if len(lines) > 1 else ""
+                    blocks.append({"index": index, "timecode": timecode, "text": ""})
+
+            # Batch translation using JSON mode
+            batch_size = 25
+            for i in range(0, len(blocks), batch_size):
+                batch = blocks[i:i + batch_size]
+                # Filter out empty texts to save API tokens
+                non_empty_indices = [idx for idx, b in enumerate(batch) if b["text"]]
+                
+                if not non_empty_indices:
+                    # All blocks in this batch are empty
+                    for b in batch:
+                        b["translated_text"] = ""
+                    continue
+
+                texts_to_translate = [batch[idx]["text"] for idx in non_empty_indices]
+
+                # Call Mistral API in JSON mode
+                prompt = (
+                    f"You are a professional translator. Translate the following list of subtitle texts from {source_lang} to {target_lang}.\n"
+                    f"Maintain the exact meaning, tone, and formatting of each list element.\n"
+                    f"Return a JSON object containing a list under the key 'translations'.\n"
+                    f"Ensure the output list has exactly the same number of elements ({len(texts_to_translate)}) as the input list, in the exact same order.\n\n"
+                    f"Input JSON:\n" + json.dumps({"texts": texts_to_translate}, indent=2)
+                )
+
+                try:
+                    response = await self.client.chat.complete_async(
+                        model="mistral-large-latest",
+                        messages=[{"role": "user", "content": prompt}],
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    if not response or not response.choices:
+                        raise ValueError("No response from Mistral Large API for batch translation")
+                    
+                    res_content = response.choices[0].message.content
+                    res_json = json.loads(res_content)
+                    translations = res_json.get("translations", [])
+
+                    if len(translations) != len(texts_to_translate):
+                        logger.warning(
+                            f"Mismatch in translation batch size: expected {len(texts_to_translate)}, got {len(translations)}. Retrying individually."
+                        )
+                        # Fallback: translate one by one for this batch
+                        translations = []
+                        for txt in texts_to_translate:
+                            trans = await self.translate_text(txt, source_lang, target_lang)
+                            translations.append(trans)
+
+                    # Map translations back to the batch items
+                    for idx_in_non_empty, original_batch_idx in enumerate(non_empty_indices):
+                        batch[original_batch_idx]["translated_text"] = translations[idx_in_non_empty]
+
+                    # Assign empty strings for any other items
+                    for idx, b in enumerate(batch):
+                        if idx not in non_empty_indices:
+                            b["translated_text"] = ""
+
+                except Exception as e:
+                    logger.error(f"Batch translation failed at block {i}: {e}. Falling back to individual translation.")
+                    # Fallback for the whole batch
+                    for b in batch:
+                        if b["text"]:
+                            b["translated_text"] = await self.translate_text(b["text"], source_lang, target_lang)
+                        else:
+                            b["translated_text"] = ""
+
+            # Rebuild SRT content
+            output_lines = []
+            for b in blocks:
+                output_lines.append(f"{b['index']}\n{b['timecode']}\n{b['translated_text']}")
+            translated_content = "\n\n".join(output_lines)
+            
+        else:
+            # Plain text file translation
+            # Split it into paragraphs or segments to avoid token limit issues
+            paragraphs = content.split("\n\n")
+            translated_paragraphs = []
+            
+            # Group paragraphs into chunks of ~3000 chars
+            current_chunk = []
+            current_len = 0
+            chunks = []
+            
+            for p in paragraphs:
+                if current_len + len(p) + 2 > 3000:
+                    chunks.append("\n\n".join(current_chunk))
+                    current_chunk = [p]
+                    current_len = len(p)
+                else:
+                    current_chunk.append(p)
+                    current_len += len(p) + 2
+            if current_chunk:
+                chunks.append("\n\n".join(current_chunk))
+
+            for chunk in chunks:
+                if chunk.strip():
+                    translated_chunk = await self.translate_text(chunk, source_lang, target_lang)
+                    translated_paragraphs.append(translated_chunk)
+                else:
+                    translated_paragraphs.append("")
+
+            translated_content = "\n\n".join(translated_paragraphs)
+
+        # Write translated file
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(translated_content)
+
+        logger.info(f"Translated file written to {output_path}")
+        return output_path
