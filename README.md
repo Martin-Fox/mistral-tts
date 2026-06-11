@@ -5,6 +5,7 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 ## 🚀 Features
 
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
+- **Integrated Translation:** Translate `.txt` and `.srt` source files from a source language to a target language using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
 - **Zero-Shot Voice Cloning:** Instantly clones any voice profile using a 3-to-10-second reference audio sample.
 - **Preset Voice Selection:** Choose from high-quality default Mistral voices (e.g., Paul, Sarah) without needing a sample.
 - **Intelligent Text Segmentation:** Tokenizes long texts based on punctuation and character constraints to preserve semantic flow.
@@ -12,10 +13,11 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 - **Progress Persistence:** Tracks generation state via a local manifest, allowing you to resume if interrupted.
 - **Environment Support:** Securely store your API key in a `.env` file.
 
-## 🚀 Current focus
+## 🚀 Future Roadmap
 
-We are working towards making Mistral-TTS-Booksmith a truly global audiobook creator. Our next major milestone is:
-- **Direct Translation:** Integrate translation from Language A to Language B using the **Mistral Large** model (`v1/chat/completions`). This will allow you to ingest a book in one language and generate the audiobook in another, all within a single pipeline.
+Our next major milestones are:
+- **WebUI:** A beautiful, responsive web application to configure runs, preview voices, and monitor generation.
+- **Docker Image:** Containerize the application, bundling FFmpeg and Python dependencies for zero-setup deployments.
 
 ## 🛠️ Installation
 
@@ -73,6 +75,8 @@ python3 src/cli.py --text <path_to_text_file> \
 | --- | --- |
 | `--tui` | Launches the interactive Terminal User Interface. |
 | `--text` | Path to the source `.txt` or `.srt` file. |
+| `--source-lang` | (Optional) Source language of the input file (e.g., `Polish`). Defaults to `English`. |
+| `--target-lang` | (Optional) Target language to translate the text into before generating speech (e.g., `English`). |
 | `--voice` | Path to a short `.mp3` or `.wav` sample for cloning. |
 | `--output` | The destination path for the final `.mp3` file. |
 | `--api-key` | Your Mistral AI API key (overrides `.env`). |
