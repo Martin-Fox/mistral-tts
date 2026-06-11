@@ -125,9 +125,10 @@ class MistralTTSClient:
                     logger.error(f"Failed to generate audio after {retry_count} attempts.")
                     raise
 
-    async def translate_text(self, text: str, source_lang: str, target_lang: str) -> str:
+    async def translate_text(self, text: str, source_lang: str, target_lang: str, retry_count: int = 5) -> str:
         """
         Translates a single block of text from source_lang to target_lang using Mistral Large.
+        Includes exponential backoff retry logic to handle rate limits (429) and transient errors.
         """
         prompt = (
             f"You are a professional translator. Translate the following text from {source_lang} to {target_lang}. "
@@ -135,19 +136,25 @@ class MistralTTSClient:
             f"Return ONLY the translated text. Do not add any introductory remarks, explanations, or formatting.\n\n"
             f"Text to translate:\n{text}"
         )
-        try:
-            response = await self.client.chat.complete_async(
-                model="mistral-large-latest",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            if response and response.choices:
-                return response.choices[0].message.content.strip()
-            raise ValueError("Empty response from translation API")
-        except Exception as e:
-            logger.error(f"Translation failed: {e}")
-            raise
+        for attempt in range(retry_count):
+            try:
+                response = await self.client.chat.complete_async(
+                    model="mistral-large-latest",
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                if response and response.choices:
+                    return response.choices[0].message.content.strip()
+                raise ValueError("Empty response from translation API")
+            except Exception as e:
+                logger.warning(f"Translation attempt {attempt + 1} failed: {e}")
+                if attempt < retry_count - 1:
+                    wait_time = 2 ** attempt
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Translation failed after {retry_count} attempts: {e}")
+                    raise
 
     async def translate_file(self, input_path: Path, source_lang: str, target_lang: str) -> Path:
         """
@@ -215,13 +222,27 @@ class MistralTTSClient:
                     f"Input JSON:\n" + json.dumps({"texts": texts_to_translate}, indent=2)
                 )
 
+                # Retry loop with exponential backoff for the batch call
+                response = None
+                retry_count = 5
+                for attempt in range(retry_count):
+                    try:
+                        response = await self.client.chat.complete_async(
+                            model="mistral-large-latest",
+                            messages=[{"role": "user", "content": prompt}],
+                            response_format={"type": "json_object"}
+                        )
+                        break
+                    except Exception as e:
+                        logger.warning(f"Batch translation attempt {attempt + 1} failed: {e}")
+                        if attempt < retry_count - 1:
+                            wait_time = 2 ** attempt
+                            await asyncio.sleep(wait_time)
+                        else:
+                            logger.error(f"Batch translation failed after {retry_count} attempts.")
+                            raise
+
                 try:
-                    response = await self.client.chat.complete_async(
-                        model="mistral-large-latest",
-                        messages=[{"role": "user", "content": prompt}],
-                        response_format={"type": "json_object"}
-                    )
-                    
                     if not response or not response.choices:
                         raise ValueError("No response from Mistral Large API for batch translation")
                     
@@ -249,7 +270,7 @@ class MistralTTSClient:
                             b["translated_text"] = ""
 
                 except Exception as e:
-                    logger.error(f"Batch translation failed at block {i}: {e}. Falling back to individual translation.")
+                    logger.error(f"Batch processing failed at block {i}: {e}. Falling back to individual translation.")
                     # Fallback for the whole batch
                     for b in batch:
                         if b["text"]:
