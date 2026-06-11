@@ -128,7 +128,7 @@ class MistralTTSClient:
     async def translate_text(self, text: str, source_lang: str, target_lang: str, retry_count: int = 5) -> str:
         """
         Translates a single block of text from source_lang to target_lang using Mistral Large.
-        Includes exponential backoff retry logic to handle rate limits (429) and transient errors.
+        Includes rate-limit aware backoff retry logic (longer wait times for HTTP 429).
         """
         prompt = (
             f"You are a professional translator. Translate the following text from {source_lang} to {target_lang}. "
@@ -148,9 +148,13 @@ class MistralTTSClient:
                     return response.choices[0].message.content.strip()
                 raise ValueError("Empty response from translation API")
             except Exception as e:
+                err_msg = str(e).lower()
+                is_rate_limit = "429" in err_msg or "rate limit" in err_msg or "rate_limited" in err_msg
+                
                 logger.warning(f"Translation attempt {attempt + 1} failed: {e}")
                 if attempt < retry_count - 1:
-                    wait_time = 2 ** attempt
+                    wait_time = 15 * (attempt + 1) if is_rate_limit else (2 ** attempt)
+                    logger.info(f"Rate limit or error encountered. Sleeping for {wait_time}s before retrying...")
                     await asyncio.sleep(wait_time)
                 else:
                     logger.error(f"Translation failed after {retry_count} attempts: {e}")
@@ -234,9 +238,13 @@ class MistralTTSClient:
                         )
                         break
                     except Exception as e:
+                        err_msg = str(e).lower()
+                        is_rate_limit = "429" in err_msg or "rate limit" in err_msg or "rate_limited" in err_msg
+                        
                         logger.warning(f"Batch translation attempt {attempt + 1} failed: {e}")
                         if attempt < retry_count - 1:
-                            wait_time = 2 ** attempt
+                            wait_time = 15 * (attempt + 1) if is_rate_limit else (2 ** attempt)
+                            logger.info(f"Rate limit or error encountered. Sleeping for {wait_time}s before retrying...")
                             await asyncio.sleep(wait_time)
                         else:
                             logger.error(f"Batch translation failed after {retry_count} attempts.")
@@ -277,6 +285,9 @@ class MistralTTSClient:
                             b["translated_text"] = await self.translate_text(b["text"], source_lang, target_lang)
                         else:
                             b["translated_text"] = ""
+                
+                # Proactive cooldown to prevent rate limit exhaustion
+                await asyncio.sleep(1.0)
 
             # Rebuild SRT content
             output_lines = []
@@ -310,6 +321,8 @@ class MistralTTSClient:
                 if chunk.strip():
                     translated_chunk = await self.translate_text(chunk, source_lang, target_lang)
                     translated_paragraphs.append(translated_chunk)
+                    # Proactive cooldown to prevent rate limit exhaustion
+                    await asyncio.sleep(1.0)
                 else:
                     translated_paragraphs.append("")
 
