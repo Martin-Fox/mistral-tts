@@ -93,6 +93,38 @@ python3 src/cli.py --text <path_to_text_file> \
 
 Mistral-TTS-Booksmith automatically caches generated audio chunks in `storage/cache/` and maintains a `manifest.json`. If a run fails or is stopped, simply run the same command again; the tool will skip completed chunks and resume from where it left off.
 
+## 🐳 Docker Setup
+
+You can build and run the application using Docker to avoid installing system-level dependencies like FFmpeg:
+
+### 1. Build the Docker image
+```bash
+docker build -t mistral-tts-booksmith .
+```
+
+### 2. Run the interactive TUI
+To run the interactive Textual Terminal UI inside Docker, you need to enable interactive mode (`-it`):
+```bash
+docker run -it --rm \
+  -v $(pwd)/storage:/app/storage \
+  -e MISTRAL_API_KEY=your_key_here \
+  mistral-tts-booksmith
+```
+
+### 3. Run the standard CLI
+For headless or automated audiobook generation:
+```bash
+docker run --rm \
+  -v $(pwd)/storage:/app/storage \
+  -v $(pwd)/your_text_dir:/app/data \
+  -e MISTRAL_API_KEY=your_key_here \
+  mistral-tts-booksmith \
+  --text /app/data/book.txt \
+  --voice /app/data/sample.mp3 \
+  --output /app/storage/output/audiobook.mp3
+```
+
 ## ⚖️ License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
