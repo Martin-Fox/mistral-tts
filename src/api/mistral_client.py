@@ -21,32 +21,43 @@ class MistralTTSClient:
         self.voice_sample_path: Optional[Path] = None
         self.voice_id: Optional[str] = None
 
-    async def list_models(self) -> list:
+    async def list_models(self, retry_count: int = 3) -> list:
         """Lists available models from the Mistral API."""
-        try:
-            response = await self.client.models.list_async()
-            return [m.id for m in response.data]
-        except Exception as e:
-            logger.warning(f"Failed to fetch models from API: {e}")
-            return []
+        for attempt in range(retry_count):
+            try:
+                response = await self.client.models.list_async()
+                return [m.id for m in response.data]
+            except Exception as e:
+                logger.warning(f"Failed to fetch models from API on attempt {attempt + 1}: {e}")
+                if attempt < retry_count - 1:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    return []
 
-    async def list_voices(self) -> list:
+    async def list_voices(self, retry_count: int = 3) -> list:
         """
         Lists available voices from the Mistral API.
         Returns a list of voice objects with id and name.
         """
-        try:
-            response = await self.client.audio.voices.list_async()
-            return [{"id": v.id, "name": v.name} for v in response.data]
-        except Exception as e:
-            logger.warning(f"Failed to fetch voices from API: {e}")
-            # Fallback to some common defaults if API fails or key is missing
-            return [
-                {"id": "en_paul_neutral", "name": "Paul (Male - Neutral)"},
-                {"id": "en_sarah_expressive", "name": "Sarah (Female - Expressive)"},
-                {"id": "mistral-en-001", "name": "Mistral Male (US)"},
-                {"id": "mistral-en-002", "name": "Mistral Female (US)"},
-            ]
+        for attempt in range(retry_count):
+            try:
+                response = await self.client.audio.voices.list_async()
+                return [{"id": v.id, "name": v.name} for v in response.data]
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_rate_limit = "429" in err_msg or "rate limit" in err_msg or "rate_limited" in err_msg
+                
+                logger.warning(f"Failed to fetch voices from API on attempt {attempt + 1}: {e}")
+                if attempt < retry_count - 1:
+                    wait_time = 10 if is_rate_limit else (2 ** attempt)
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.warning(f"Using default fallback voices due to failure after {retry_count} attempts.")
+                    # Fallback to some common defaults if API fails or key is missing
+                    return [
+                        {"id": "en_paul_neutral", "name": "Paul (Male - Neutral)"},
+                        {"id": "en_sarah_expressive", "name": "Sarah (Female - Expressive)"},
+                    ]
 
     def set_voice_id(self, voice_id: str):
         """Sets a default voice ID to use."""

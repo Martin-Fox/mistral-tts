@@ -53,8 +53,6 @@ class BooksmithTUI(App):
     DEFAULT_VOICES = [
         ("Paul (Male - Neutral)", "en_paul_neutral"),
         ("Sarah (Female - Expressive)", "en_sarah_expressive"),
-        ("Mistral Male (US)", "mistral-en-001"),
-        ("Mistral Female (US)", "mistral-en-002"),
     ]
 
     def compose(self) -> ComposeResult:
