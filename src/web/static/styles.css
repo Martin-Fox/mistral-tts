@@ -1,0 +1,1023 @@
+/* ==========================================================================
+   MISTRAL-TTS-BOOKSMITH - PREMIUM STYLESHEET
+   Design System: Deep Space-Gray & Sleek Slate with Glassmorphism
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Design Tokens & CSS Variables
+   -------------------------------------------------------------------------- */
+:root {
+    /* Color Palette */
+    --bg-color: #0f172a;               /* Deep space-gray */
+    --card-bg: rgba(30, 41, 59, 0.7);   /* Sleek slate with opacity for glassmorphism */
+    --card-bg-opaque: #1e293b;         /* Opaque sleek slate */
+    --border-color: #334155;           /* Subtle slate border */
+    --border-color-focus: #6366f1;     /* Glowing indigo focus border */
+    
+    /* Accents & Gradients */
+    --primary-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);  /* Indigo to Violet */
+    --secondary-gradient: linear-gradient(135deg, #10b981 0%, #059669 100%); /* Emerald success */
+    --progress-gradient: linear-gradient(90deg, #6366f1 0%, #a855f7 50%, #10b981 100%); /* Pulsing progress bar */
+    
+    /* Text Colors */
+    --text-primary: #f8fafc;           /* Crisp white */
+    --text-muted: #94a3b8;             /* Muted slate-gray */
+    
+    /* Typography & Shadows */
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+    --shadow-glow: 0 0 15px rgba(99, 102, 241, 0.25);
+    --shadow-glow-success: 0 0 15px rgba(16, 185, 129, 0.25);
+    
+    /* Transitions */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --------------------------------------------------------------------------
+   2. Reset & Global Styles
+   -------------------------------------------------------------------------- */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    letter-spacing: -0.011em;
+    min-height: 100vh;
+    padding: 2rem 1rem;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar for Entire Page */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-color);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--card-bg-opaque);
+    border: 2px solid var(--bg-color);
+    border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--border-color);
+}
+
+/* --------------------------------------------------------------------------
+   3. Layout & Container
+   -------------------------------------------------------------------------- */
+.app-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* Premium Header */
+.app-header {
+    margin-bottom: 2.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid rgba(51, 65, 87, 0.4);
+}
+
+.logo-area {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.35rem;
+}
+
+.logo-svg {
+    width: 2.25rem;
+    height: 2.25rem;
+    color: #6366f1;
+    filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.4));
+    animation: pulseLogo 3s ease-in-out infinite alternate;
+}
+
+.header-title {
+    font-size: 1.85rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    background: var(--primary-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.header-subtitle {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+/* Main Responsive Grid Layout */
+.main-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    align-items: start;
+}
+
+@media (min-width: 968px) {
+    .main-layout {
+        grid-template-columns: 1.1fr 0.9fr;
+    }
+}
+
+/* Dashboard Columns */
+.dashboard-column {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+/* --------------------------------------------------------------------------
+   4. Glassmorphism Card Component
+   -------------------------------------------------------------------------- */
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    transition: transform var(--transition-slow), opacity var(--transition-slow), box-shadow var(--transition-slow);
+}
+
+/* Reveal Animation when .hidden is removed */
+.card:not(.hidden) {
+    animation: cardReveal var(--transition-slow) forwards;
+}
+
+.card.hidden {
+    display: none !important;
+    opacity: 0;
+    transform: translateY(20px);
+}
+
+@keyframes cardReveal {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Card Header */
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(51, 65, 87, 0.4);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.card-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Status Badges */
+.badge {
+    padding: 0.35rem 0.85rem;
+    border-radius: 50px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(99, 102, 241, 0.1);
+    color: #8b5cf6;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    transition: all var(--transition-fast);
+}
+
+.badge.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   5. Interactive Form Fields
+   -------------------------------------------------------------------------- */
+.form-group {
+    margin-bottom: 1.75rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group:last-of-type {
+    margin-bottom: 2rem;
+}
+
+.group-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+}
+
+.group-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    color: #6366f1;
+}
+
+/* Inputs, Textareas, Selects */
+input[type="text"],
+input[type="password"],
+textarea,
+select {
+    width: 100%;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 0.95rem;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), height var(--transition-normal);
+    outline: none;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+textarea:focus,
+select:focus {
+    border-color: var(--border-color-focus);
+    box-shadow: var(--shadow-glow);
+    background: rgba(15, 23, 42, 0.7);
+}
+
+/* Password Input Container & Visibility Button */
+.password-input-container {
+    position: relative;
+    width: 100%;
+}
+
+.password-input-container input {
+    padding-right: 3rem;
+}
+
+.toggle-visibility-btn {
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--transition-fast);
+}
+
+.toggle-visibility-btn:hover {
+    color: var(--text-primary);
+}
+
+.eye-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+.field-help {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    line-height: 1.4;
+}
+
+/* --------------------------------------------------------------------------
+   6. Custom Select Wrappers
+   -------------------------------------------------------------------------- */
+.custom-select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.custom-select-wrapper select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 2.75rem;
+}
+
+.select-chevron {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.25rem;
+    height: 1.25rem;
+    color: var(--text-muted);
+    pointer-events: none;
+    transition: transform var(--transition-fast);
+}
+
+.custom-select-wrapper select:focus + .select-chevron {
+    color: var(--text-primary);
+    transform: translateY(-50%) rotate(180deg);
+}
+
+/* --------------------------------------------------------------------------
+   7. Drag-and-Drop Zones (.dropzone)
+   -------------------------------------------------------------------------- */
+.dropzone {
+    position: relative;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    padding: 2rem 1.5rem;
+    background: rgba(15, 23, 42, 0.3);
+    text-align: center;
+    cursor: pointer;
+    transition: border-color var(--transition-normal), background-color var(--transition-normal);
+}
+
+.dropzone input[type="file"] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 2;
+}
+
+.dropzone:hover,
+.dropzone.dragover {
+    border-color: var(--border-color-focus);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.dropzone-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    pointer-events: none;
+}
+
+.upload-arrow {
+    width: 2.25rem;
+    height: 2.25rem;
+    color: var(--text-muted);
+    transition: transform var(--transition-normal), color var(--transition-normal);
+}
+
+.dropzone:hover .upload-arrow {
+    color: #8b5cf6;
+    transform: translateY(-4px);
+}
+
+.dropzone-text {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.dropzone-text .highlight {
+    color: #8b5cf6;
+    font-weight: 500;
+}
+
+.dropzone-text .browse-link {
+    color: #6366f1;
+    text-decoration: underline;
+    font-weight: 500;
+}
+
+.selected-file-name {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: rgba(30, 41, 59, 0.5);
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    border: 1px solid rgba(51, 65, 87, 0.4);
+    word-break: break-all;
+    max-width: 100%;
+    margin-top: 0.25rem;
+}
+
+.dropzone.has-file .selected-file-name {
+    color: #10b981;
+    border-color: rgba(16, 185, 129, 0.3);
+    background: rgba(16, 185, 129, 0.05);
+}
+
+/* --------------------------------------------------------------------------
+   8. Interactive Tabs (Segmented Pill Selector)
+   -------------------------------------------------------------------------- */
+.tab-selector {
+    display: flex;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 0.25rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    gap: 0.25rem;
+    margin-bottom: 1.25rem;
+}
+
+.tab-button {
+    flex: 1;
+    cursor: pointer;
+    position: relative;
+    user-select: none;
+}
+
+.tab-button input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.tab-text {
+    display: block;
+    text-align: center;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    transition: all var(--transition-normal);
+}
+
+.tab-button:hover .tab-text {
+    color: var(--text-primary);
+}
+
+.tab-button input[type="radio"]:checked + .tab-text {
+    background: var(--primary-gradient);
+    color: #ffffff;
+    box-shadow: var(--shadow-md);
+}
+
+/* Tab Panels */
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+    animation: panelFadeIn var(--transition-normal) forwards;
+}
+
+@keyframes panelFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* --------------------------------------------------------------------------
+   9. Collapsible Pasted-Text Details
+   -------------------------------------------------------------------------- */
+details.collapsible-text-section {
+    margin-top: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.25);
+    overflow: hidden;
+    transition: border-color var(--transition-fast);
+}
+
+details.collapsible-text-section:hover {
+    border-color: rgba(99, 102, 241, 0.4);
+}
+
+.collapsible-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    list-style: none;
+    user-select: none;
+    transition: color var(--transition-fast);
+}
+
+.collapsible-summary:hover {
+    color: var(--text-primary);
+}
+
+.collapsible-summary::-webkit-details-marker {
+    display: none;
+}
+
+.chevron-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    color: var(--text-muted);
+    transition: transform var(--transition-normal), color var(--transition-fast);
+}
+
+.collapsible-summary:hover .chevron-icon {
+    color: var(--text-primary);
+}
+
+details[open] .chevron-icon {
+    transform: rotate(180deg);
+}
+
+.collapsible-content {
+    padding: 0 1rem 1rem 1rem;
+    animation: slideDown var(--transition-normal) forwards;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Expanding Textarea on Focus */
+textarea#text-content {
+    min-height: 100px;
+    height: 100px;
+    resize: vertical;
+}
+
+textarea#text-content:focus {
+    height: 180px;
+}
+
+/* --------------------------------------------------------------------------
+   10. Translation Settings & Switch Toggle
+   -------------------------------------------------------------------------- */
+.group-header-toggle {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.group-label.clickable {
+    cursor: pointer;
+    margin-bottom: 0;
+}
+
+.switch-control {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 22px;
+}
+
+.switch-control input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(51, 65, 85, 0.6);
+    border: 1px solid var(--border-color);
+    border-radius: 22px;
+    transition: all var(--transition-normal);
+}
+
+.switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: var(--text-primary);
+    border-radius: 50%;
+    transition: all var(--transition-normal);
+}
+
+.switch-control input:checked + .switch-slider {
+    background: var(--primary-gradient);
+    border-color: transparent;
+}
+
+.switch-control input:checked + .switch-slider:before {
+    transform: translateX(22px);
+    background-color: #ffffff;
+}
+
+.switch-control input:focus + .switch-slider {
+    box-shadow: var(--shadow-glow);
+}
+
+/* Subform Collapsible Expansion */
+.subform {
+    max-height: 500px;
+    opacity: 1;
+    overflow: visible;
+    transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, transform 0.3s ease;
+    transform-origin: top;
+    transform: scaleY(1);
+    margin-top: 1rem;
+}
+
+.subform.collapsed {
+    max-height: 0;
+    opacity: 0;
+    transform: scaleY(0);
+    overflow: hidden;
+    pointer-events: none;
+    margin-top: 0;
+}
+
+/* Language Selection Grid */
+.language-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+}
+
+@media (min-width: 480px) {
+    .language-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.select-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.field-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   11. Buttons & Submit
+   -------------------------------------------------------------------------- */
+.primary-submit-btn {
+    width: 100%;
+    padding: 0.9rem 1.5rem;
+    background: var(--primary-gradient);
+    border: none;
+    border-radius: 8px;
+    color: #ffffff;
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
+}
+
+.primary-submit-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.1);
+    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.45), var(--shadow-glow);
+}
+
+.primary-submit-btn:active {
+    transform: translateY(1px);
+}
+
+.submit-btn-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    transition: transform var(--transition-normal);
+}
+
+.primary-submit-btn:hover .submit-btn-icon {
+    transform: translateX(2px);
+}
+
+/* --------------------------------------------------------------------------
+   12. Real-time Progress Dashboard
+   -------------------------------------------------------------------------- */
+.progress-container {
+    margin-bottom: 1.5rem;
+}
+
+.progress-details {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+.progress-title {
+    color: var(--text-primary);
+}
+
+.progress-percent {
+    color: #8b5cf6;
+    font-weight: 600;
+}
+
+/* Progress Track and Bar */
+.progress-track {
+    height: 10px;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid var(--border-color);
+    border-radius: 50px;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--progress-gradient);
+    border-radius: 50px;
+    background-size: 200% 100%;
+    animation: progressShimmer 2.5s linear infinite;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes progressShimmer {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   13. Terminal Console Component
+   -------------------------------------------------------------------------- */
+.terminal-container {
+    background: #090d16;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 260px;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.terminal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(30, 41, 59, 0.5);
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.terminal-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.terminal-action-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.terminal-action-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+
+.terminal-body {
+    padding: 1rem;
+    overflow-y: auto;
+    flex: 1;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.825rem;
+    line-height: 1.5;
+    color: #cbd5e1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+/* Terminal Console Lines Custom Scrollbar */
+.terminal-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.terminal-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.terminal-body::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.terminal-body::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* Terminal Console Line Categories */
+.console-line {
+    word-break: break-all;
+}
+
+.system-line {
+    color: #38bdf8; /* Cyan */
+}
+
+.success-line {
+    color: #34d399; /* Green */
+}
+
+.warning-line {
+    color: #facc15; /* Yellow */
+}
+
+.error-line {
+    color: #f87171; /* Red */
+}
+
+/* --------------------------------------------------------------------------
+   14. Success Alert Banner & Audio Player
+   -------------------------------------------------------------------------- */
+.success-alert {
+    display: flex;
+    gap: 1rem;
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1.75rem;
+    box-shadow: var(--shadow-glow-success);
+    animation: alertFadeIn var(--transition-slow) forwards;
+}
+
+@keyframes alertFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.alert-icon-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #10b981;
+    width: 2rem;
+    height: 2rem;
+    background: rgba(16, 185, 129, 0.12);
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.alert-success-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+}
+
+.alert-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.alert-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #10b981;
+}
+
+.alert-description {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+/* Audio Player Wrapper & Download Button */
+.player-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.native-audio-player {
+    width: 100%;
+    outline: none;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--border-color);
+}
+
+/* Styling native audio controls for Webkit browser support */
+.native-audio-player::-webkit-media-controls-enclosure {
+    background-color: rgba(30, 41, 59, 0.8);
+}
+
+.native-audio-player::-webkit-media-controls-panel {
+    color: var(--text-primary);
+}
+
+/* Premium Download Button */
+.action-download-btn {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.85rem 1.5rem;
+    background: var(--secondary-gradient);
+    border-radius: 8px;
+    color: #ffffff;
+    font-weight: 600;
+    text-decoration: none;
+    font-size: 0.95rem;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
+}
+
+.action-download-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.1);
+    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35), var(--shadow-glow-success);
+}
+
+.action-download-btn:active {
+    transform: translateY(1px);
+}
+
+.download-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    transition: transform var(--transition-normal);
+}
+
+.action-download-btn:hover .download-icon {
+    transform: translateY(2px);
+}
+
+/* --------------------------------------------------------------------------
+   15. Helper Animations & States
+   -------------------------------------------------------------------------- */
+@keyframes pulseLogo {
+    0% {
+        transform: scale(1);
+        filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.3));
+    }
+    100% {
+        transform: scale(1.04);
+        filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.5));
+    }
+}
