@@ -161,6 +161,11 @@ docker run --rm \
 ```
 
 
+## 🗺️ Future Roadmap
+
+- **Basic Authentication Layer:** Implement an authentication mechanism (e.g., HTTP Basic Auth or token-based) to secure the WebUI and API endpoints for multi-user or network deployments.
+- **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a lightweight SQLite database.
+
 ## ⚖️ License
 
 MIT License - see [LICENSE](LICENSE) for details.
