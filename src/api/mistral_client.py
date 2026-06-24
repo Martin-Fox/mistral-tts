@@ -42,7 +42,7 @@ class MistralTTSClient:
         for attempt in range(retry_count):
             try:
                 response = await self.client.audio.voices.list_async()
-                return [{"id": v.id, "name": v.name} for v in response.data]
+                return [{"id": v.slug or v.id, "name": v.name} for v in response.items]
             except Exception as e:
                 err_msg = str(e).lower()
                 is_rate_limit = "429" in err_msg or "rate limit" in err_msg or "rate_limited" in err_msg
