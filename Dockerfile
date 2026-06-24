@@ -32,8 +32,9 @@ COPY --chown=appuser:appuser storage/ ./storage/
 # Use the non-root user
 USER appuser
 
-# Set entrypoint to run the cli.py application
-ENTRYPOINT ["python", "src/cli.py"]
+# Expose WebUI port
+EXPOSE 8000
 
-# Default command runs the TUI
-CMD ["--tui"]
+# Default command runs the WebUI
+CMD ["uvicorn", "src.web:app", "--host", "0.0.0.0", "--port", "8000"]
+

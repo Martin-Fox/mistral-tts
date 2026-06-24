@@ -9,3 +9,6 @@ rich
 asyncio
 textual
 python-dotenv
+fastapi
+uvicorn
+python-multipart
