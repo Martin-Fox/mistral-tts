@@ -4,8 +4,10 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 
 ## 🚀 Features
 
+- **Interactive WebUI:** A premium, responsive single-page web application featuring glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, an in-browser console terminal streaming live server logs via Server-Sent Events (SSE), and a custom audio player for instant playback.
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
 - **Integrated Translation:** Translate `.txt` and `.srt` source files from a source language to a target language using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
+
 - **Zero-Shot Voice Cloning:** Instantly clones any voice profile using a 3-to-10-second reference audio sample.
 - **Preset Voice Selection:** Choose from high-quality default Mistral voices (e.g., Paul, Sarah) without needing a sample.
 - **Intelligent Text Segmentation:** Tokenizes long texts based on punctuation and character constraints to preserve semantic flow.
@@ -84,13 +86,24 @@ python3 src/cli.py --text <path_to_text_file> \
 | `--output` | The destination path for the final `.mp3` file. |
 | `--api-key` | Your Mistral AI API key (overrides `.env`). |
 
+### Running Tests
+
+To run the automated test suite and verify the integrity of core modules, the translation pipeline, and the WebUI backend:
+
+```bash
+PYTHONPATH=. pytest
+```
+
 ## 🏗️ Architecture
 
 - **`src/tui.py`**: The interactive Terminal UI built with Textual.
+- **`src/web.py`**: FastAPI web server hosting API endpoints and background synthesis tasks.
+- **`src/web/static/`**: Contains HTML, CSS, and JS assets for the Single-Page Web application.
 - **`src/core/text_splitter.py`**: Handles semantic chunking logic.
 - **`src/api/mistral_client.py`**: Wrapper for Voxtral API interaction and cloning.
 - **`src/core/audio_compiler.py`**: FFmpeg-based stitching and metadata manipulation.
 - **`src/cli.py`**: Primary command-line interface entry point.
+
 
 ## ⚙️ State Persistence
 
