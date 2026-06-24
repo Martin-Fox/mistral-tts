@@ -1,0 +1,405 @@
+import asyncio
+import contextvars
+import hashlib
+import json
+import logging
+import time
+import uuid
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from src.core.text_splitter import TextSplitter
+from src.api.mistral_client import MistralTTSClient
+from src.core.audio_compiler import AudioCompiler
+
+# Ensure directories exist on startup
+Path("src/web/static").mkdir(parents=True, exist_ok=True)
+Path("storage/cache").mkdir(parents=True, exist_ok=True)
+Path("storage/output").mkdir(parents=True, exist_ok=True)
+
+# Set up logging
+logger = logging.getLogger("booksmith")
+
+app = FastAPI(title="Mistral TTS Booksmith API")
+
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
+
+# Global progress store
+progress_store = {}
+
+# ContextVar to track the active task_id in each coroutine
+current_task_id = contextvars.ContextVar("current_task_id", default=None)
+
+class TaskLogHandler(logging.Handler):
+    """
+    Custom logging handler that appends formatted log records to the active task's log list
+    using context variables for concurrency safety.
+    """
+    def __init__(self, store: dict):
+        super().__init__()
+        self.store = store
+        self.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"))
+
+    def emit(self, record):
+        try:
+            task_id = current_task_id.get()
+            if task_id and task_id in self.store:
+                log_entry = self.format(record)
+                self.store[task_id]["logs"].append(log_entry)
+        except Exception:
+            self.handleError(record)
+
+# Register global logging handler at module level
+global_log_handler = TaskLogHandler(progress_store)
+logging.getLogger("booksmith").addHandler(global_log_handler)
+logging.getLogger("src").addHandler(global_log_handler)
+
+def get_cache_key(
+    text: str,
+    voice_preset: Optional[str],
+    voice_manual_id: Optional[str],
+    voice_bytes: Optional[bytes],
+    source_lang: Optional[str],
+    target_lang: Optional[str]
+) -> str:
+    """
+    Generates a unique cache key based on translation and voice parameters.
+    """
+    hasher = hashlib.sha256()
+    hasher.update(text.encode("utf-8"))
+    if voice_preset:
+        hasher.update(voice_preset.encode("utf-8"))
+    if voice_manual_id:
+        hasher.update(voice_manual_id.encode("utf-8"))
+    if voice_bytes:
+        hasher.update(voice_bytes)
+    if source_lang:
+        hasher.update(source_lang.encode("utf-8"))
+    if target_lang:
+        hasher.update(target_lang.encode("utf-8"))
+    return hasher.hexdigest()
+
+def load_manifest(manifest_path: Path) -> dict:
+    """Loads cache manifest file if it exists."""
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"chunks": [], "completed": []}
+
+def save_manifest(manifest_path: Path, manifest: dict):
+    """Saves cache manifest file atomically using a temporary file and replace."""
+    temp_path = manifest_path.with_suffix(".tmp")
+    try:
+        with open(temp_path, "w") as f:
+            json.dump(manifest, f, indent=4)
+        temp_path.replace(manifest_path)
+    except Exception as e:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+        raise e
+
+async def run_generation_pipeline(
+    task_id: str,
+    api_key: str,
+    text_content: Optional[str],
+    text_file_data: Optional[tuple[str, bytes]],
+    voice_file_data: Optional[tuple[str, bytes]],
+    voice_preset: Optional[str],
+    voice_manual_id: Optional[str],
+    source_lang: Optional[str],
+    target_lang: Optional[str],
+    output_filename: str
+):
+    """
+    Asynchronous pipeline task that handles file translation, voice cloning,
+    audio chunk generation, and final compilation.
+    """
+    text_path = None
+    voice_path = None
+    translated_path = None
+
+    token = current_task_id.set(task_id)
+    try:
+        progress_store[task_id]["status"] = "Preparing Files"
+        logger.info(f"Starting audiobook generation task: {task_id}")
+
+        # 1. Save uploaded text file or text content to a temporary file
+        if text_file_data:
+            filename, content = text_file_data
+            suffix = Path(filename).suffix or ".txt"
+            text_path = Path("storage/cache") / f"input_{task_id}{suffix}"
+            with open(text_path, "wb") as f:
+                f.write(content)
+            logger.info(f"Saved uploaded text file to {text_path}")
+        elif text_content is not None:
+            text_path = Path("storage/cache") / f"input_{task_id}.txt"
+            with open(text_path, "w", encoding="utf-8") as f:
+                f.write(text_content)
+            logger.info(f"Saved text content to temporary file {text_path}")
+        else:
+            raise ValueError("No text input provided.")
+
+        # 2. Save voice file to a temporary path if provided
+        voice_bytes = None
+        if voice_file_data:
+            filename, content = voice_file_data
+            voice_bytes = content
+            suffix = Path(filename).suffix or ".mp3"
+            voice_path = Path("storage/cache") / f"voice_{task_id}{suffix}"
+            with open(voice_path, "wb") as f:
+                f.write(content)
+            logger.info(f"Saved uploaded voice file to {voice_path}")
+
+        # Read base text content
+        with open(text_path, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        # Generate cache key using parameters and inputs
+        cache_key = get_cache_key(
+            text=text,
+            voice_preset=voice_preset,
+            voice_manual_id=voice_manual_id,
+            voice_bytes=voice_bytes,
+            source_lang=source_lang,
+            target_lang=target_lang
+        )
+        cache_dir = Path("storage/cache") / cache_key
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = cache_dir / "manifest.json"
+
+        client = MistralTTSClient(api_key=api_key)
+
+        # 3. Translation step
+        if target_lang:
+            progress_store[task_id]["status"] = "Translating"
+            source = source_lang or "English"
+            logger.info(f"Translating text from {source} to {target_lang}...")
+            translated_path = await client.translate_file(text_path, source, target_lang)
+            logger.info(f"Translation completed. Translated file: {translated_path}")
+            with open(translated_path, "r", encoding="utf-8") as f:
+                text = f.read()
+
+        # 4. Split text into semantic chunks
+        progress_store[task_id]["status"] = "Splitting Text"
+        splitter = TextSplitter()
+        chunks = splitter.split(text)
+        total_chunks = len(chunks)
+        logger.info(f"Text split into {total_chunks} semantic chunks.")
+        if total_chunks == 0:
+            raise ValueError("The split text has 0 chunks.")
+
+        # 5. Clone or configure voice
+        progress_store[task_id]["status"] = "Configuring Voice"
+        if voice_path:
+            logger.info("Cloning voice profile from uploaded file...")
+            await client.clone_voice(voice_path)
+        elif voice_preset:
+            logger.info(f"Setting voice preset to: {voice_preset}")
+            client.set_voice_id(voice_preset)
+        elif voice_manual_id:
+            logger.info(f"Setting voice ID to: {voice_manual_id}")
+            client.set_voice_id(voice_manual_id)
+        else:
+            logger.info("No voice specified. Defaulting to en_paul_neutral.")
+            client.set_voice_id("en_paul_neutral")
+
+        # 6. Load manifest and generate audio chunks
+        progress_store[task_id]["status"] = "Generating Audio"
+        manifest = load_manifest(manifest_path)
+        manifest["chunks"] = chunks
+
+        chunk_files = []
+        for i, chunk in enumerate(chunks):
+            chunk_filename = f"chunk_{i:04d}.mp3"
+            chunk_path = cache_dir / chunk_filename
+            chunk_files.append(chunk_path)
+
+            if (
+                chunk_filename in manifest.get("completed", [])
+                and len(manifest.get("chunks", [])) > i
+                and manifest["chunks"][i] == chunk
+                and chunk_path.exists()
+                and chunk_path.stat().st_size > 0
+            ):
+                logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
+                percentage = int(((i + 1) / total_chunks) * 90)
+                progress_store[task_id]["percentage"] = percentage
+                continue
+
+            logger.info(f"Generating audio for chunk {i+1}/{total_chunks}...")
+            await client.generate_audio(chunk, chunk_path)
+
+            if "completed" not in manifest:
+                manifest["completed"] = []
+            manifest["completed"].append(chunk_filename)
+            save_manifest(manifest_path, manifest)
+
+            percentage = int(((i + 1) / total_chunks) * 90)
+            progress_store[task_id]["percentage"] = percentage
+
+        # 7. Compile final audiobook
+        progress_store[task_id]["status"] = "Compiling Audiobook"
+        logger.info("Compiling final audiobook file...")
+        compiler = AudioCompiler()
+        output_path = Path("storage/output") / output_filename
+        await asyncio.to_thread(compiler.compile, chunk_files, output_path)
+        logger.info(f"Audiobook compiled successfully. Saved to {output_path}")
+
+        # 8. Mark task as completed
+        progress_store[task_id]["percentage"] = 100
+        progress_store[task_id]["status"] = "Completed"
+        progress_store[task_id]["completed"] = True
+        progress_store[task_id]["audio_file"] = output_filename
+
+    except Exception as e:
+        logger.error(f"Error in generation pipeline: {e}", exc_info=True)
+        if task_id in progress_store:
+            progress_store[task_id]["status"] = "Failed"
+            progress_store[task_id]["error"] = str(e)
+    finally:
+        current_task_id.reset(token)
+
+        # Clean up temporary uploaded text, voice, and translated files
+        if text_path and text_path.exists():
+            try:
+                text_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary text file {text_path}: {e}")
+        if voice_path and voice_path.exists():
+            try:
+                voice_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary voice file {voice_path}: {e}")
+        if translated_path and translated_path.exists():
+            try:
+                translated_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary translated file {translated_path}: {e}")
+
+@app.get("/")
+def read_root():
+    """Serves the main frontend page."""
+    return FileResponse("src/web/static/index.html")
+
+@app.get("/api/audio/{filename}")
+def get_audio(filename: str):
+    """Serves the compiled audiobook file with protection against path traversal."""
+    base_dir = Path("storage/output").resolve()
+    file_path = (base_dir / filename).resolve()
+    if not file_path.is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return FileResponse(file_path, media_type="audio/mpeg")
+
+@app.get("/api/progress")
+async def get_progress(task_id: str = Query(...)):
+    """
+    Returns an SSE stream yielding progress updates as JSON-encoded string events.
+    """
+    if task_id not in progress_store:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    async def event_generator():
+        while True:
+            task_state = progress_store.get(task_id)
+            if not task_state:
+                break
+            yield f"data: {json.dumps(task_state)}\n\n"
+            if task_state.get("completed") or task_state.get("error") or task_state.get("status") == "Failed":
+                break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/api/generate")
+async def generate_audiobook(
+    background_tasks: BackgroundTasks,
+    text_file: Optional[UploadFile] = File(None),
+    text_content: Optional[str] = Form(None),
+    voice_file: Optional[UploadFile] = File(None),
+    voice_preset: Optional[str] = Form(None),
+    voice_manual_id: Optional[str] = Form(None),
+    source_lang: Optional[str] = Form(None),
+    target_lang: Optional[str] = Form(None),
+    output_filename: str = Form("audiobook.mp3"),
+    api_key: str = Form(...)
+):
+    """
+    Triggers the background generation task and returns a unique task ID immediately.
+    Includes eviction of tasks older than 24 hours to prevent memory leaks.
+    """
+    if not text_file and not text_content:
+        raise HTTPException(status_code=400, detail="Either text_file or text_content must be provided.")
+
+    if not api_key or not api_key.strip():
+        raise HTTPException(status_code=400, detail="API key is required.")
+
+    # Sanitize and validate the output audiobook filename to prevent path traversal
+    safe_filename = Path(output_filename).name
+    if not safe_filename or safe_filename.startswith(".") or Path(safe_filename).suffix.lower() not in (".mp3", ".m4b", ".wav"):
+        raise HTTPException(status_code=400, detail="Invalid output filename. Must be a valid audio file name.")
+
+    # Prevent memory leaks: evict progress store tasks older than 24 hours, but only if they are in terminal states
+    now = time.time()
+    expired_tasks = [
+        tid for tid, state in progress_store.items()
+        if now - state.get("created_at", 0) > 86400 and state.get("status") in ("Completed", "Failed")
+    ]
+    for tid in expired_tasks:
+        try:
+            del progress_store[tid]
+        except KeyError:
+            pass
+
+    task_id = str(uuid.uuid4())
+
+    # Read uploaded file contents in the request handler to prevent closed file descriptors in background task
+    text_file_data = None
+    if text_file:
+        text_bytes = await text_file.read()
+        text_file_data = (text_file.filename, text_bytes)
+
+    voice_file_data = None
+    if voice_file:
+        voice_bytes = await voice_file.read()
+        voice_file_data = (voice_file.filename, voice_bytes)
+
+    # Initialize task state in progress store
+    progress_store[task_id] = {
+        "percentage": 0,
+        "status": "Pending",
+        "logs": [],
+        "completed": False,
+        "audio_file": None,
+        "error": None,
+        "created_at": now
+    }
+
+    # Enqueue background execution task
+    background_tasks.add_task(
+        run_generation_pipeline,
+        task_id=task_id,
+        api_key=api_key.strip(),
+        text_content=text_content,
+        text_file_data=text_file_data,
+        voice_file_data=voice_file_data,
+        voice_preset=voice_preset,
+        voice_manual_id=voice_manual_id,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        output_filename=safe_filename
+    )
+
+    return {"task_id": task_id}
