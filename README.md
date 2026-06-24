@@ -13,13 +13,8 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 - **Progress Persistence:** Tracks generation state via a local manifest, allowing you to resume if interrupted.
 - **Environment Support:** Securely store your API key in a `.env` file.
 
-## 🚀 Future Roadmap
-
-Our next major milestones are:
-- **WebUI:** A beautiful, responsive web application to configure runs, preview voices, and monitor generation.
-- **Docker Image:** Containerize the application, bundling FFmpeg and Python dependencies for zero-setup deployments.
-
 ## 🛠️ Installation
+
 
 ### Prerequisites
 
@@ -103,12 +98,19 @@ Mistral-TTS-Booksmith automatically caches generated audio chunks in `storage/ca
 
 ## 🐳 Docker Setup
 
-You can build and run the application using Docker to avoid installing system-level dependencies like FFmpeg:
+You can run the application using Docker to avoid installing system-level dependencies like FFmpeg. A pre-built image is available on Docker Hub as **`marcinlis82/mistral-tts`**.
 
-### 1. Build the Docker image
+### 1. Pull the pre-built image (Recommended)
+```bash
+docker pull marcinlis82/mistral-tts
+```
+
+Alternatively, you can build the image locally from source:
 ```bash
 docker build -t mistral-tts-booksmith .
 ```
+
+*Note: In the commands below, replace `marcinlis82/mistral-tts` with `mistral-tts-booksmith` if you built the image locally.*
 
 ### 2. Run the WebUI (Default)
 To run the WebUI inside Docker:
@@ -118,7 +120,7 @@ docker run -d --rm \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_key_here \
   --name mistral-tts-booksmith \
-  mistral-tts-booksmith
+  marcinlis82/mistral-tts
 ```
 
 ### 3. Run the interactive TUI
@@ -127,7 +129,7 @@ To run the interactive Textual Terminal UI inside Docker, you need to enable int
 docker run -it --rm \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_key_here \
-  mistral-tts-booksmith \
+  marcinlis82/mistral-tts \
   python src/cli.py --tui
 ```
 
@@ -138,12 +140,13 @@ docker run --rm \
   -v $(pwd)/storage:/app/storage \
   -v $(pwd)/your_text_dir:/app/data \
   -e MISTRAL_API_KEY=your_key_here \
-  mistral-tts-booksmith \
+  marcinlis82/mistral-tts \
   python src/cli.py \
   --text /app/data/book.txt \
   --voice /app/data/sample.mp3 \
   --output /app/storage/output/audiobook.mp3
 ```
+
 
 ## ⚖️ License
 

@@ -51,7 +51,7 @@
                             <span>Mistral API Authentication</span>
                         </label>
                         <div class="password-input-container">
-                            <input type="password" id="api-key" name="api_key" placeholder="Enter your Mistral API Key" required autocomplete="current-password">
+                            <input type="password" id="api-key" name="api_key" placeholder="Enter your Mistral API Key (optional if in .env)" autocomplete="current-password">
                             <button type="button" id="toggle-api-visibility" class="toggle-visibility-btn" aria-label="Toggle API key visibility">
                                 <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -59,7 +59,8 @@
                                 </svg>
                             </button>
                         </div>
-                        <p class="field-help">Your key is stored securely in your browser's local storage and is never sent to third parties.</p>
+                        <p class="field-help">Optional if <code>MISTRAL_API_KEY</code> is configured in your <code>.env</code> file. Stored securely in your browser's local storage.</p>
+
                     </div>
 
                     <!-- Text Input Section -->
@@ -136,16 +137,32 @@
                         <div id="preset-voice-panel" class="tab-panel active">
                             <div class="custom-select-wrapper">
                                 <select id="voice-preset" name="voice_preset">
-                                    <option value="en_paul_neutral" selected>Paul - Neutral (English)</option>
-                                    <option value="en_sarah_expressive">Sarah - Expressive (English)</option>
-                                    <option value="fr_bernard_neutral">Bernard - Neutral (French)</option>
-                                    <option value="fr_florence_expressive">Florence - Expressive (French)</option>
+                                    <optgroup label="English (US)">
+                                        <option value="en_paul_neutral" selected>Paul - Neutral (Male)</option>
+                                        <option value="en_paul_cheerful">Paul - Cheerful (Male)</option>
+                                        <option value="en_paul_confident">Paul - Confident (Male)</option>
+                                        <option value="en_paul_excited">Paul - Excited (Male)</option>
+                                    </optgroup>
+                                    <optgroup label="English (UK)">
+                                        <option value="gb_oliver_neutral">Oliver - Neutral (Male)</option>
+                                        <option value="gb_oliver_cheerful">Oliver - Cheerful (Male)</option>
+                                        <option value="gb_jane_neutral">Jane - Neutral (Female)</option>
+                                        <option value="gb_jane_confident">Jane - Confident (Female)</option>
+                                        <option value="gb_jane_sarcasm">Jane - Sarcasm (Female)</option>
+                                    </optgroup>
+                                    <optgroup label="French">
+                                        <option value="fr_marie_neutral">Marie - Neutral (Female)</option>
+                                        <option value="fr_marie_happy">Marie - Happy (Female)</option>
+                                        <option value="fr_marie_excited">Marie - Excited (Female)</option>
+                                        <option value="fr_marie_curious">Marie - Curious (Female)</option>
+                                    </optgroup>
                                 </select>
                                 <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="6 9 12 15 18 9"></polyline>
                                 </svg>
                             </div>
                         </div>
+
 
                         <!-- Panel 2: Manual Voice ID -->
                         <div id="manual-voice-panel" class="tab-panel">
