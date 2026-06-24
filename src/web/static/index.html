@@ -51,7 +51,7 @@
                             <span>Mistral API Authentication</span>
                         </label>
                         <div class="password-input-container">
-                            <input type="password" id="api-key" name="api_key" placeholder="Enter your Mistral API Key" required autocomplete="current-password">
+                            <input type="password" id="api-key" name="api_key" placeholder="Enter your Mistral API Key (optional if in .env)" autocomplete="current-password">
                             <button type="button" id="toggle-api-visibility" class="toggle-visibility-btn" aria-label="Toggle API key visibility">
                                 <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -59,7 +59,8 @@
                                 </svg>
                             </button>
                         </div>
-                        <p class="field-help">Your key is stored securely in your browser's local storage and is never sent to third parties.</p>
+                        <p class="field-help">Optional if <code>MISTRAL_API_KEY</code> is configured in your <code>.env</code> file. Stored securely in your browser's local storage.</p>
+
                     </div>
 
                     <!-- Text Input Section -->

@@ -3,11 +3,13 @@ import contextvars
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,10 +18,14 @@ from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
 from src.core.audio_compiler import AudioCompiler
 
+# Load environment variables from .env
+load_dotenv()
+
 # Ensure directories exist on startup
 Path("src/web/static").mkdir(parents=True, exist_ok=True)
 Path("storage/cache").mkdir(parents=True, exist_ok=True)
 Path("storage/output").mkdir(parents=True, exist_ok=True)
+
 
 # Set up logging
 logger = logging.getLogger("booksmith")
@@ -334,7 +340,7 @@ async def generate_audiobook(
     source_lang: Optional[str] = Form(None),
     target_lang: Optional[str] = Form(None),
     output_filename: str = Form("audiobook.mp3"),
-    api_key: str = Form(...)
+    api_key: Optional[str] = Form(None)
 ):
     """
     Triggers the background generation task and returns a unique task ID immediately.
@@ -343,8 +349,11 @@ async def generate_audiobook(
     if not text_file and not text_content:
         raise HTTPException(status_code=400, detail="Either text_file or text_content must be provided.")
 
-    if not api_key or not api_key.strip():
-        raise HTTPException(status_code=400, detail="API key is required.")
+    # Resolve API key from form or environment fallback
+    resolved_api_key = (api_key or "").strip() or os.getenv("MISTRAL_API_KEY")
+    if not resolved_api_key:
+        raise HTTPException(status_code=400, detail="API key is required. Please enter it in the WebUI or set MISTRAL_API_KEY in your .env file.")
+
 
     # Sanitize and validate the output audiobook filename to prevent path traversal
     safe_filename = Path(output_filename).name
@@ -391,7 +400,7 @@ async def generate_audiobook(
     background_tasks.add_task(
         run_generation_pipeline,
         task_id=task_id,
-        api_key=api_key.strip(),
+        api_key=resolved_api_key,
         text_content=text_content,
         text_file_data=text_file_data,
         voice_file_data=voice_file_data,
@@ -401,5 +410,6 @@ async def generate_audiobook(
         target_lang=target_lang,
         output_filename=safe_filename
     )
+
 
     return {"task_id": task_id}

@@ -119,8 +119,9 @@ def test_generate_missing_text():
     assert response.status_code == 400
     assert "Either text_file or text_content must be provided." in response.json()["detail"]
 
-def test_generate_missing_api_key():
-    """Assert that omitting or providing an empty API key returns a client error status code 400."""
+@patch("os.getenv", return_value=None)
+def test_generate_missing_api_key(mock_getenv):
+    """Assert that omitting or providing an empty API key returns a client error status code 400 when not in env."""
     data = {
         "api_key": "   ",
         "text_content": "Hello",
@@ -130,3 +131,4 @@ def test_generate_missing_api_key():
     response = client.post("/api/generate", data=data)
     assert response.status_code == 400
     assert "API key is required." in response.json()["detail"]
+

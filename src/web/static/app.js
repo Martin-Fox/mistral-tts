@@ -188,11 +188,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // --- Validation ---
         const apiKey = apiKeyInput.value.trim();
-        if (!apiKey) {
-            alert('Please enter your Mistral API Key.');
-            apiKeyInput.focus();
-            return;
-        }
 
         const textFileInput = document.getElementById('text-file');
         const textContentInput = document.getElementById('text-content');
@@ -205,8 +200,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Save API key to localStorage
-        localStorage.setItem('api_key', apiKey);
+        // Save or clear API key in localStorage
+        if (apiKey) {
+            localStorage.setItem('api_key', apiKey);
+        } else {
+            localStorage.removeItem('api_key');
+        }
+
 
         // --- Form Data Assembly & Cleanup ---
         const formData = new FormData(generatorForm);
