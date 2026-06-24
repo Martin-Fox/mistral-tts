@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mistral-TTS-Booksmith - Premium Audiobook Generator</title>
+    <meta name="description" content="Transform long-form text and subtitle files into seamless, high-quality audiobooks using the Mistral AI Voxtral TTS API with instant voice cloning.">
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Premium Stylesheets -->
+    <link rel="stylesheet" href="/static/styles.css">
+    
+    <!-- Deferred Application Logic -->
+    <script src="/static/app.js" defer></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Premium Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <div class="logo-area">
+                    <svg class="logo-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 3v18"></path>
+                        <path d="M19 7v10"></path>
+                        <path d="M22 10v4"></path>
+                        <path d="M5 5v14"></path>
+                        <path d="M2 9v6"></path>
+                    </svg>
+                    <h1 class="header-title">Mistral-TTS-Booksmith</h1>
+                </div>
+                <p class="header-subtitle">Zero-Shot Voice Cloning & Audiobook Synthesis</p>
+            </div>
+        </header>
+
+        <!-- Main Responsive Grid Layout -->
+        <main class="main-layout">
+            <!-- Form Card (Configuration) -->
+            <section class="card form-card">
+                <form id="generator-form" novalidate>
+                    <!-- API Key Section -->
+                    <div class="form-group">
+                        <label for="api-key" class="group-label">
+                            <svg class="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                            <span>Mistral API Authentication</span>
+                        </label>
+                        <div class="password-input-container">
+                            <input type="password" id="api-key" name="api_key" placeholder="Enter your Mistral API Key" required autocomplete="current-password">
+                            <button type="button" id="toggle-api-visibility" class="toggle-visibility-btn" aria-label="Toggle API key visibility">
+                                <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                            </button>
+                        </div>
+                        <p class="field-help">Your key is stored securely in your browser's local storage and is never sent to third parties.</p>
+                    </div>
+
+                    <!-- Text Input Section -->
+                    <div class="form-group">
+                        <span class="group-label">
+                            <svg class="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                                <line x1="16" y1="13" x2="8" y2="13"></line>
+                                <line x1="16" y1="17" x2="8" y2="17"></line>
+                                <polyline points="10 9 9 9 8 9"></polyline>
+                            </svg>
+                            <span>Source Text</span>
+                        </span>
+                        
+                        <!-- Drag-and-drop File Upload Zone -->
+                        <div id="text-dropzone" class="dropzone">
+                            <input type="file" id="text-file" name="text_file" accept=".txt,.srt">
+                            <div class="dropzone-info">
+                                <svg class="upload-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="16 16 12 12 8 16"></polyline>
+                                    <line x1="12" y1="12" x2="12" y2="21"></line>
+                                    <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path>
+                                    <polyline points="16 16 12 12 8 16"></polyline>
+                                </svg>
+                                <p class="dropzone-text">Drag & drop your <span class="highlight">.txt</span> or <span class="highlight">.srt</span> file, or <span class="browse-link">browse</span></p>
+                                <span class="selected-file-name" id="text-file-name">No file selected</span>
+                            </div>
+                        </div>
+
+                        <!-- Collapsible Copy-Paste Text Area -->
+                        <details class="collapsible-text-section">
+                            <summary class="collapsible-summary">
+                                <span>Or paste text manually</span>
+                                <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </summary>
+                            <div class="collapsible-content">
+                                <textarea id="text-content" name="text_content" placeholder="Paste your articles, essays, or book chapters here..."></textarea>
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- Voice Configuration Section -->
+                    <div class="form-group">
+                        <span class="group-label">
+                            <svg class="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                                <line x1="12" y1="19" x2="12" y2="23"></line>
+                                <line x1="8" y1="23" x2="16" y2="23"></line>
+                            </svg>
+                            <span>Voice Configuration</span>
+                        </span>
+
+                        <!-- Segmented Mode Selection Tabs -->
+                        <div class="tab-selector">
+                            <label class="tab-button">
+                                <input type="radio" name="voice_mode" value="preset" checked>
+                                <span class="tab-text">Preset Voices</span>
+                            </label>
+                            <label class="tab-button">
+                                <input type="radio" name="voice_mode" value="manual">
+                                <span class="tab-text">Manual Voice ID</span>
+                            </label>
+                            <label class="tab-button">
+                                <input type="radio" name="voice_mode" value="clone">
+                                <span class="tab-text">Voice Cloning</span>
+                            </label>
+                        </div>
+
+                        <!-- Panel 1: Preset Voices -->
+                        <div id="preset-voice-panel" class="tab-panel active">
+                            <div class="custom-select-wrapper">
+                                <select id="voice-preset" name="voice_preset">
+                                    <option value="en_paul_neutral" selected>Paul - Neutral (English)</option>
+                                    <option value="en_sarah_expressive">Sarah - Expressive (English)</option>
+                                    <option value="fr_bernard_neutral">Bernard - Neutral (French)</option>
+                                    <option value="fr_florence_expressive">Florence - Expressive (French)</option>
+                                </select>
+                                <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </div>
+                        </div>
+
+                        <!-- Panel 2: Manual Voice ID -->
+                        <div id="manual-voice-panel" class="tab-panel">
+                            <input type="text" id="voice-manual-id" name="voice_manual_id" placeholder="Enter custom Voice ID (e.g., en_paul_neutral)">
+                        </div>
+
+                        <!-- Panel 3: Voice Cloning -->
+                        <div id="cloning-voice-panel" class="tab-panel">
+                            <div id="voice-dropzone" class="dropzone voice-dropzone">
+                                <input type="file" id="voice-file" name="voice_file" accept=".mp3,.wav">
+                                <div class="dropzone-info">
+                                    <svg class="upload-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                                    </svg>
+                                    <p class="dropzone-text">Upload reference voice sample (<span class="highlight">3-10s</span>, .mp3/.wav)</p>
+                                    <span class="selected-file-name" id="voice-file-name">No audio selected</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Translation Section -->
+                    <div class="form-group">
+                        <div class="group-header-toggle">
+                            <label for="translation-toggle" class="group-label clickable">
+                                <svg class="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 8h14M5 8a2 2 0 1 1 0-4h14a2 2 0 1 1 0 4M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8m-9 4h4"></path>
+                                </svg>
+                                <span>Translation Settings</span>
+                            </label>
+                            <label class="switch-control">
+                                <input type="checkbox" id="translation-toggle" name="enable_translation">
+                                <span class="switch-slider"></span>
+                            </label>
+                        </div>
+
+                        <div id="translation-subform" class="subform collapsed">
+                            <div class="language-grid">
+                                <div class="select-field">
+                                    <label for="source-lang" class="field-label">Source Language</label>
+                                    <div class="custom-select-wrapper">
+                                        <select id="source-lang" name="source_lang">
+                                            <option value="English" selected>English</option>
+                                            <option value="Polish">Polish</option>
+                                            <option value="French">French</option>
+                                            <option value="Spanish">Spanish</option>
+                                            <option value="German">German</option>
+                                            <option value="Italian">Italian</option>
+                                        </select>
+                                        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="6 9 12 15 18 9"></polyline>
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="select-field">
+                                    <label for="target-lang" class="field-label">Target Language</label>
+                                    <div class="custom-select-wrapper">
+                                        <select id="target-lang" name="target_lang">
+                                            <option value="English">English</option>
+                                            <option value="Polish" selected>Polish</option>
+                                            <option value="French">French</option>
+                                            <option value="Spanish">Spanish</option>
+                                            <option value="German">German</option>
+                                            <option value="Italian">Italian</option>
+                                        </select>
+                                        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="6 9 12 15 18 9"></polyline>
+                                        </svg>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Output Settings -->
+                    <div class="form-group">
+                        <label for="output-filename" class="group-label">
+                            <svg class="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span>Output Configuration</span>
+                        </label>
+                        <input type="text" id="output-filename" name="output_filename" placeholder="audiobook.mp3" value="audiobook.mp3" required>
+                        <p class="field-help">Specify the destination filename. Supported formats: .mp3, .wav, .m4b.</p>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" id="submit-btn" class="primary-submit-btn">
+                        <span class="submit-btn-text">Generate Audiobook</span>
+                        <svg class="submit-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                    </button>
+                </form>
+            </section>
+
+            <!-- Dashboard Columns (Progress Monitoring & Playback) -->
+            <div class="dashboard-column">
+                <!-- Progress Monitoring Card -->
+                <section id="progress-card" class="card progress-card hidden">
+                    <div class="card-header">
+                        <h2 class="card-title">Pipeline Status</h2>
+                        <span id="status-badge" class="badge">Preparing</span>
+                    </div>
+
+                    <!-- Progress Bar Component -->
+                    <div class="progress-container">
+                        <div class="progress-details">
+                            <span class="progress-title">Overall Progress</span>
+                            <span id="progress-percentage" class="progress-percent">0%</span>
+                        </div>
+                        <div id="progress-bar-container" class="progress-track">
+                            <div id="progress-bar" class="progress-fill" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Scrollable Console / Logs Terminal -->
+                    <div class="terminal-container">
+                        <div class="terminal-header">
+                            <span class="terminal-title">System Console Logs</span>
+                            <button type="button" id="clear-console-btn" class="terminal-action-btn">Clear Logs</button>
+                        </div>
+                        <div id="console-logs" class="terminal-body">
+                            <div class="console-line system-line">System ready. Awaiting parameters.</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Audio Playback Card -->
+                <section id="player-card" class="card player-card hidden">
+                    <!-- Success Banner -->
+                    <div id="success-banner" class="success-alert">
+                        <div class="alert-icon-wrapper">
+                            <svg class="alert-success-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                        </div>
+                        <div class="alert-content">
+                            <h3 class="alert-title">Compilation Successful</h3>
+                            <p class="alert-description">Your audiobook has been compiled and is ready for playback.</p>
+                        </div>
+                    </div>
+
+                    <!-- Audio Player Control & Download Area -->
+                    <div class="player-wrapper">
+                        <audio id="audio-player" class="native-audio-player" controls></audio>
+                        <a id="download-btn" href="#" class="action-download-btn" download>
+                            <svg class="download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span>Download Audio File</span>
+                        </a>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
