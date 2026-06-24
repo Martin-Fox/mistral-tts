@@ -13,13 +13,8 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 - **Progress Persistence:** Tracks generation state via a local manifest, allowing you to resume if interrupted.
 - **Environment Support:** Securely store your API key in a `.env` file.
 
-## 🚀 Future Roadmap
-
-Our next major milestones are:
-- **WebUI:** A beautiful, responsive web application to configure runs, preview voices, and monitor generation.
-- **Docker Image:** Containerize the application, bundling FFmpeg and Python dependencies for zero-setup deployments.
-
 ## 🛠️ Installation
+
 
 ### Prerequisites
 
