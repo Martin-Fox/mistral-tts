@@ -47,6 +47,14 @@ Our next major milestones are:
 
 ## 📖 Usage
 
+### Running the WebUI
+
+To launch the beautiful, responsive WebUI:
+
+```bash
+python3 -m uvicorn src.web:app --reload
+```
+
 ### Interactive TUI (Recommended)
 
 The easiest way to use the tool is via the built-in Terminal UI:
@@ -102,16 +110,28 @@ You can build and run the application using Docker to avoid installing system-le
 docker build -t mistral-tts-booksmith .
 ```
 
-### 2. Run the interactive TUI
+### 2. Run the WebUI (Default)
+To run the WebUI inside Docker:
+```bash
+docker run -d --rm \
+  -p 8000:8000 \
+  -v $(pwd)/storage:/app/storage \
+  -e MISTRAL_API_KEY=your_key_here \
+  --name mistral-tts-booksmith \
+  mistral-tts-booksmith
+```
+
+### 3. Run the interactive TUI
 To run the interactive Textual Terminal UI inside Docker, you need to enable interactive mode (`-it`):
 ```bash
 docker run -it --rm \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_key_here \
-  mistral-tts-booksmith
+  mistral-tts-booksmith \
+  python src/cli.py --tui
 ```
 
-### 3. Run the standard CLI
+### 4. Run the standard CLI
 For headless or automated audiobook generation:
 ```bash
 docker run --rm \
@@ -119,6 +139,7 @@ docker run --rm \
   -v $(pwd)/your_text_dir:/app/data \
   -e MISTRAL_API_KEY=your_key_here \
   mistral-tts-booksmith \
+  python src/cli.py \
   --text /app/data/book.txt \
   --voice /app/data/sample.mp3 \
   --output /app/storage/output/audiobook.mp3
