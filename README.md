@@ -27,8 +27,8 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 
 1. Clone the repository:
    ```bash
-   git clone https://gitea.marcin-lis.pl/fox/mistral-tts-booksmith.git
-   cd mistral-tts-booksmith
+   git clone https://gitea.marcin-lis.pl/fox/mistral-tts.git
+   cd mistral-tts
    ```
 
 2. Install dependencies:
@@ -120,10 +120,10 @@ docker pull marcinlis82/mistral-tts
 
 Alternatively, you can build the image locally from source:
 ```bash
-docker build -t mistral-tts-booksmith .
+docker build -t mistral-tts .
 ```
 
-*Note: In the commands below, replace `marcinlis82/mistral-tts` with `mistral-tts-booksmith` if you built the image locally.*
+*Note: In the commands below, replace `marcinlis82/mistral-tts` with `mistral-tts` if you built the image locally.*
 
 ### 2. Run the WebUI (Default)
 To run the WebUI inside Docker:
@@ -132,7 +132,7 @@ docker run -d --rm \
   -p 8000:8000 \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_key_here \
-  --name mistral-tts-booksmith \
+  --name mistral-tts \
   marcinlis82/mistral-tts
 ```
 
