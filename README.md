@@ -163,8 +163,15 @@ docker run --rm \
 
 ## 🗺️ Future Roadmap
 
-- **Basic Authentication Layer:** Implement an authentication mechanism (e.g., HTTP Basic Auth or token-based) to secure the WebUI and API endpoints for multi-user or network deployments.
-- **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a lightweight SQLite database.
+- [x] **Integrated Translation:** Direct translation from Language A to Language B using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase.
+- [x] **Interactive WebUI:** A responsive web application to configure runs, preview voices, and monitor generation.
+- [x] **Docker Containerization:** Containerize the application, bundling FFmpeg and Python dependencies for zero-setup deployments.
+- [x] **Basic Authentication Layer:** Secure the WebUI and API endpoints with session cookies for multi-user or network deployments.
+- [ ] **OpenID Connect (OIDC) Login:** Integrate authentication based on OpenID Connect (OIDC) provided by a self-hosted Pocket ID instance for single sign-on.
+- [ ] **Multi-User Login:** Support multiple user accounts and sessions, paving the way for personalized histories, settings, and task queues.
+- [ ] **CLI User Management:** Add command-line interface options to create, update, and manage user accounts securely, keeping user-creation tools out of the WebUI.
+- [ ] **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a SQLite database.
+
 
 ## ⚖️ License
 
