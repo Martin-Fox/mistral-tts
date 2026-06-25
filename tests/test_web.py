@@ -4,7 +4,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from src.web import app, progress_store, get_audio
+from src.web import app, progress_store, get_audio, verify_session
+
+# Bypass authentication by default in tests
+app.dependency_overrides[verify_session] = lambda: "session-id"
 
 client = TestClient(app)
 
@@ -131,4 +134,162 @@ def test_generate_missing_api_key(mock_getenv):
     response = client.post("/api/generate", data=data)
     assert response.status_code == 400
     assert "API key is required." in response.json()["detail"]
+
+
+def test_authentication_status_unauthenticated():
+    """Assert that checking status without a session cookie returns authenticated: False."""
+    app.dependency_overrides.clear()
+    try:
+        response = client.get("/api/auth/status")
+        assert response.status_code == 200
+        assert response.json()["authenticated"] is False
+    finally:
+        app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_login_success():
+    """Assert that a login request with correct credentials returns 200 and sets the session cookie."""
+    with patch("src.web.APP_USERNAME", "admin"), \
+         patch("src.web.APP_PASSWORD", "admin"):
+        app.dependency_overrides.clear()
+        try:
+            payload = {"username": "admin", "password": "admin"}
+            response = client.post("/api/auth/login", json=payload)
+            assert response.status_code == 200
+            assert "Login successful" in response.json()["message"]
+            # Check that session_id cookie is set
+            assert "session_id" in response.cookies
+        finally:
+            app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_login_failure():
+    """Assert that a login request with incorrect credentials returns 401."""
+    with patch("src.web.APP_USERNAME", "admin"), \
+         patch("src.web.APP_PASSWORD", "admin"):
+        app.dependency_overrides.clear()
+        try:
+            payload = {"username": "admin", "password": "wrong_password"}
+            response = client.post("/api/auth/login", json=payload)
+            assert response.status_code == 401
+            assert "Incorrect username or password" in response.json()["detail"]
+        finally:
+            app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_logout_success():
+    """Assert that a logout request clears the session and cookie."""
+    with patch("src.web.APP_USERNAME", "admin"), \
+         patch("src.web.APP_PASSWORD", "admin"):
+        app.dependency_overrides.clear()
+        try:
+            # First login to establish session
+            login_response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+            assert login_response.status_code == 200
+            assert "session_id" in login_response.cookies
+            
+            # Then logout
+            logout_response = client.post("/api/auth/logout")
+            assert logout_response.status_code == 200
+            
+            # Verify status is now unauthenticated
+            status_response = client.get("/api/auth/status")
+            assert status_response.json()["authenticated"] is False
+        finally:
+            app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_api_endpoint_requires_session():
+    """Assert that accessing a protected API endpoint without a session cookie returns 401."""
+    app.dependency_overrides.clear()
+    try:
+        response = client.get("/api/progress?task_id=some_id")
+        assert response.status_code == 401
+        assert "Not authenticated" in response.json()["detail"]
+    finally:
+        app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_change_password_unauthorized():
+    """Assert that changing the password without a session returns 401."""
+    app.dependency_overrides.clear()
+    try:
+        payload = {"current_password": "admin", "new_password": "newpassword"}
+        response = client.post("/api/auth/change-password", json=payload)
+        assert response.status_code == 401
+    finally:
+        app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_change_password_success(tmp_path):
+    """Assert that a valid change-password request updates the password and writes to auth.json."""
+    temp_auth_file = tmp_path / "auth.json"
+    
+    with patch("src.web.AUTH_FILE", temp_auth_file), \
+         patch("src.web.APP_PASSWORD", "admin"):
+        
+        app.dependency_overrides.clear()
+        try:
+            # Login first to get session
+            login_res = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+            assert login_res.status_code == 200
+            
+            # Change password
+            payload = {
+                "current_password": "admin",
+                "new_password": "new_secure_password"
+            }
+            response = client.post("/api/auth/change-password", json=payload)
+            assert response.status_code == 200
+            assert "Password updated successfully" in response.json()["message"]
+            
+            # Verify file was written
+            assert temp_auth_file.exists()
+            with open(temp_auth_file, "r") as f:
+                saved_data = json.load(f)
+                assert saved_data["password"] == "new_secure_password"
+        finally:
+            app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_change_password_wrong_current(tmp_path):
+    """Assert that providing a wrong current password returns 400."""
+    temp_auth_file = tmp_path / "auth.json"
+    
+    with patch("src.web.AUTH_FILE", temp_auth_file), \
+         patch("src.web.APP_PASSWORD", "admin"):
+        
+        app.dependency_overrides.clear()
+        try:
+            # Login first
+            client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+            
+            payload = {
+                "current_password": "wrong_current_password",
+                "new_password": "new_secure_password"
+            }
+            response = client.post("/api/auth/change-password", json=payload)
+            assert response.status_code == 400
+            assert "Incorrect current password" in response.json()["detail"]
+        finally:
+            app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_change_password_too_short():
+    """Assert that a new password shorter than 4 characters is rejected with 400."""
+    with patch("src.web.APP_PASSWORD", "admin"):
+        app.dependency_overrides.clear()
+        try:
+            # Login first
+            client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+            
+            payload = {
+                "current_password": "admin",
+                "new_password": "abc"
+            }
+            response = client.post("/api/auth/change-password", json=payload)
+            assert response.status_code == 400
+            assert "New password must be at least 4 characters long" in response.json()["detail"]
+        finally:
+            app.dependency_overrides[verify_session] = lambda: "session-id"
 

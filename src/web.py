@@ -9,10 +9,12 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+import secrets
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query
+from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
@@ -30,7 +32,42 @@ Path("storage/output").mkdir(parents=True, exist_ok=True)
 # Set up logging
 logger = logging.getLogger("booksmith")
 
-app = FastAPI(title="Mistral TTS Booksmith API")
+# Authentication configuration (for HTTP Basic Auth)
+AUTH_FILE = Path("storage/auth.json")
+APP_USERNAME = os.getenv("APP_USERNAME", "admin")
+APP_PASSWORD = os.getenv("APP_PASSWORD", "admin")
+
+if AUTH_FILE.exists():
+    try:
+        with open(AUTH_FILE, "r") as f:
+            auth_data = json.load(f)
+            APP_USERNAME = auth_data.get("username", APP_USERNAME)
+            APP_PASSWORD = auth_data.get("password", APP_PASSWORD)
+        logger.info("Loaded persisted credentials from storage/auth.json")
+    except Exception as e:
+        logger.error(f"Failed to load persisted credentials: {e}")
+
+if APP_USERNAME == "admin" and APP_PASSWORD == "admin":
+    logger.warning("Using default credentials (admin/admin). Please set APP_USERNAME and APP_PASSWORD in your environment or .env file.")
+
+# Active sessions store (in-memory)
+active_sessions = set()
+
+def verify_session(session_id: Optional[str] = Cookie(None)):
+    """
+    Validates the session cookie.
+    Designed as a pluggable dependency to allow easy transition to OIDC/Pocket-ID in the future.
+    """
+    if not session_id or session_id not in active_sessions:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return session_id
+
+app = FastAPI(
+    title="Mistral TTS Booksmith API"
+)
 
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
@@ -293,13 +330,104 @@ async def run_generation_pipeline(
             except Exception as e:
                 logger.warning(f"Failed to delete temporary translated file {translated_path}: {e}")
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@app.post("/api/auth/change-password")
+def change_password(request: ChangePasswordRequest, session: str = Depends(verify_session)):
+    """
+    Endpoint to change the password for the current user.
+    Persists the new password to storage/auth.json so it survives restarts.
+    """
+    global APP_PASSWORD
+    
+    # Verify current password
+    if not secrets.compare_digest(request.current_password, APP_PASSWORD):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect current password"
+        )
+    
+    # Validate new password
+    if not request.new_password or len(request.new_password.strip()) < 4:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 4 characters long"
+        )
+        
+    # Persist the new credentials
+    try:
+        with open(AUTH_FILE, "w") as f:
+            json.dump({"username": APP_USERNAME, "password": request.new_password}, f, indent=4)
+        
+        # Update in-memory
+        APP_PASSWORD = request.new_password
+        logger.info(f"Password successfully changed for user: {APP_USERNAME}")
+        return {"message": "Password updated successfully. Please log in with your new credentials."}
+    except Exception as e:
+        logger.error(f"Failed to persist new password: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save new password to disk"
+        )
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/api/auth/login")
+def login(request: LoginRequest, response: Response):
+    """
+    Verifies credentials and sets a session cookie.
+    """
+    is_correct_username = secrets.compare_digest(request.username, APP_USERNAME)
+    is_correct_password = secrets.compare_digest(request.password, APP_PASSWORD)
+    if not (is_correct_username and is_correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+    
+    session_id = str(uuid.uuid4())
+    active_sessions.add(session_id)
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        samesite="lax",
+        secure=False
+    )
+    return {"message": "Login successful"}
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    """
+    Clears the session cookie and removes the session from memory.
+    """
+    session_id = request.cookies.get("session_id")
+    if session_id in active_sessions:
+        active_sessions.remove(session_id)
+    response.delete_cookie(key="session_id")
+    return {"message": "Logged out successfully"}
+
+@app.get("/api/auth/status")
+def get_auth_status(request: Request):
+    """
+    Returns the current authentication status of the user.
+    """
+    session_id = request.cookies.get("session_id")
+    if session_id and session_id in active_sessions:
+        return {"authenticated": True, "username": APP_USERNAME}
+    return {"authenticated": False}
+
 @app.get("/")
 def read_root():
     """Serves the main frontend page."""
     return FileResponse("src/web/static/index.html")
 
 @app.get("/api/audio/{filename}")
-def get_audio(filename: str):
+def get_audio(filename: str, session: str = Depends(verify_session)):
     """Serves the compiled audiobook file with protection against path traversal."""
     base_dir = Path("storage/output").resolve()
     file_path = (base_dir / filename).resolve()
@@ -310,7 +438,7 @@ def get_audio(filename: str):
     return FileResponse(file_path, media_type="audio/mpeg")
 
 @app.get("/api/progress")
-async def get_progress(task_id: str = Query(...)):
+async def get_progress(task_id: str = Query(...), session: str = Depends(verify_session)):
     """
     Returns an SSE stream yielding progress updates as JSON-encoded string events.
     """
@@ -340,7 +468,8 @@ async def generate_audiobook(
     source_lang: Optional[str] = Form(None),
     target_lang: Optional[str] = Form(None),
     output_filename: str = Form("audiobook.mp3"),
-    api_key: Optional[str] = Form(None)
+    api_key: Optional[str] = Form(None),
+    session: str = Depends(verify_session)
 ):
     """
     Triggers the background generation task and returns a unique task ID immediately.
