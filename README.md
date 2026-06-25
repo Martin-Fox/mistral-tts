@@ -36,21 +36,30 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
    pip install -r requirements.txt
    ```
 
-3. (Optional) Configure your API Key:
-   Create a `.env` file in the root directory:
+3. (Optional) Configure environment variables:
+   Create a `.env` file in the root directory to set your Mistral API Key and optional WebUI credentials:
    ```bash
    MISTRAL_API_KEY=your_mistral_api_key_here
+
+   # WebUI login credentials (defaults to admin/admin if not set)
+   APP_USERNAME=admin
+   APP_PASSWORD=admin
    ```
 
 ## 📖 Usage
 
 ### Running the WebUI
 
-To launch the beautiful, responsive WebUI:
+To launch the WebUI:
 
 ```bash
 python3 -m uvicorn src.web:app --reload
 ```
+
+Once running, open `http://localhost:8000` in your web browser.
+
+* **Default Credentials:** If you do not specify `APP_USERNAME` and `APP_PASSWORD` in your `.env` file, the WebUI defaults to the username `admin` and password `admin`. It is recommended to change these credentials in your `.env` file before exposing the interface to a network.
+
 
 ### Interactive TUI (Recommended)
 
@@ -126,15 +135,19 @@ docker build -t mistral-tts .
 *Note: In the commands below, replace `marcinlis82/mistral-tts` with `mistral-tts` if you built the image locally.*
 
 ### 2. Run the WebUI (Default)
-To run the WebUI inside Docker:
+To run the WebUI inside Docker (passing custom credentials):
 ```bash
 docker run -d --rm \
   -p 8000:8000 \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_key_here \
+  -e APP_USERNAME=myuser \
+  -e APP_PASSWORD=mypassword \
   --name mistral-tts \
   marcinlis82/mistral-tts
 ```
+*Note: If `APP_USERNAME` and `APP_PASSWORD` are not specified, they will default to `admin` and `admin` respectively.*
+
 
 ### 3. Run the interactive TUI
 To run the interactive Textual Terminal UI inside Docker, you need to enable interactive mode (`-it`):
@@ -163,8 +176,15 @@ docker run --rm \
 
 ## 🗺️ Future Roadmap
 
-- **Basic Authentication Layer:** Implement an authentication mechanism (e.g., HTTP Basic Auth or token-based) to secure the WebUI and API endpoints for multi-user or network deployments.
-- **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a lightweight SQLite database.
+- [x] **Integrated Translation:** Direct translation from Language A to Language B using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase.
+- [x] **Interactive WebUI:** A responsive web application to configure runs, preview voices, and monitor generation.
+- [x] **Docker Containerization:** Containerize the application, bundling FFmpeg and Python dependencies for zero-setup deployments.
+- [x] **Basic Authentication Layer:** Secure the WebUI and API endpoints with session cookies for multi-user or network deployments.
+- [ ] **OpenID Connect (OIDC) Login:** Integrate authentication based on OpenID Connect (OIDC) provided by a self-hosted Pocket ID instance for single sign-on.
+- [ ] **Multi-User Login:** Support multiple user accounts and sessions, paving the way for personalized histories, settings, and task queues.
+- [ ] **CLI User Management:** Add command-line interface options to create, update, and manage user accounts securely, keeping user-creation tools out of the WebUI.
+- [ ] **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a SQLite database.
+
 
 ## ⚖️ License
 
