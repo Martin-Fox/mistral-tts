@@ -410,4 +410,193 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtn.disabled = false;
         submitBtnText.textContent = originalBtnText;
     }
+
+    // === 8. Change Password Form Handling ===
+    const passwordForm = document.getElementById('password-form');
+    const currentPasswordInput = document.getElementById('current-password');
+    const newPasswordInput = document.getElementById('new-password');
+    const confirmPasswordInput = document.getElementById('confirm-password');
+    const passwordStatus = document.getElementById('password-status');
+    const updatePasswordBtn = document.getElementById('update-password-btn');
+
+    if (passwordForm) {
+        passwordForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const currentPassword = currentPasswordInput.value;
+            const newPassword = newPasswordInput.value;
+            const confirmPassword = confirmPasswordInput.value;
+            
+            // Client-side validation
+            if (!currentPassword || !newPassword || !confirmPassword) {
+                showPasswordStatus('Please fill in all fields.', 'error');
+                return;
+            }
+            
+            if (newPassword.length < 4) {
+                showPasswordStatus('New password must be at least 4 characters long.', 'error');
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                showPasswordStatus('New passwords do not match.', 'error');
+                return;
+            }
+            
+            // Disable button during request
+            updatePasswordBtn.disabled = true;
+            showPasswordStatus('Updating password...', 'system');
+            
+            try {
+                const response = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        current_password: currentPassword,
+                        new_password: newPassword
+                    })
+                });
+                
+                if (response.ok) {
+                    showPasswordStatus('Password updated successfully. The new password will be required on your next login.', 'success');
+                    passwordForm.reset();
+                } else {
+                    const data = await response.json();
+                    let errMsg = 'Failed to update password.';
+                    if (data.detail) {
+                        errMsg = data.detail;
+                    }
+                    showPasswordStatus(errMsg, 'error');
+                }
+            } catch (error) {
+                showPasswordStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                updatePasswordBtn.disabled = false;
+            }
+        });
+    }
+
+    function showPasswordStatus(message, type) {
+        if (!passwordStatus) return;
+        passwordStatus.textContent = message;
+        passwordStatus.className = 'status-message'; // reset classes
+        if (type) {
+            passwordStatus.classList.add(type);
+        }
+    }
+
+    // === 9. Toggle Settings Card ===
+    const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
+    const settingsCard = document.getElementById('settings-card');
+
+    if (toggleSettingsBtn && settingsCard) {
+        toggleSettingsBtn.addEventListener('click', () => {
+            settingsCard.classList.toggle('hidden');
+            if (!settingsCard.classList.contains('hidden')) {
+                settingsCard.scrollIntoView({ behavior: 'smooth' });
+            }
+        });
+    }
+
+    // === 10. Session Cookie Authentication & Overlay Management ===
+    const loginOverlay = document.getElementById('login-overlay');
+    const loginForm = document.getElementById('login-form');
+    const loginUsernameInput = document.getElementById('login-username');
+    const loginPasswordInput = document.getElementById('login-password');
+    const loginStatus = document.getElementById('login-status');
+    const loginSubmitBtn = document.getElementById('login-submit-btn');
+    const logoutBtn = document.getElementById('logout-btn');
+
+    // Helper to display messages on the login screen
+    function showLoginStatus(message, type) {
+        if (!loginStatus) return;
+        loginStatus.textContent = message;
+        loginStatus.className = 'status-message';
+        if (type) {
+            loginStatus.classList.add(type);
+        }
+    }
+
+    // Check auth status on page load
+    async function checkAuthStatus() {
+        try {
+            const response = await fetch('/api/auth/status');
+            const data = await response.json();
+            if (data.authenticated) {
+                if (loginOverlay) loginOverlay.classList.add('hidden');
+            } else {
+                if (loginOverlay) loginOverlay.classList.remove('hidden');
+            }
+        } catch (error) {
+            console.error('Error checking auth status:', error);
+            if (loginOverlay) loginOverlay.classList.remove('hidden');
+        }
+    }
+
+    // Handle Login Form Submission
+    if (loginForm) {
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = loginUsernameInput.value.trim();
+            const password = loginPasswordInput.value;
+            
+            if (!username || !password) {
+                showLoginStatus('Please enter both username and password.', 'error');
+                return;
+            }
+            
+            loginSubmitBtn.disabled = true;
+            showLoginStatus('Signing in...', 'system');
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                if (response.ok) {
+                    showLoginStatus('Login successful.', 'success');
+                    loginForm.reset();
+                    setTimeout(() => {
+                        if (loginOverlay) loginOverlay.classList.add('hidden');
+                    }, 500);
+                } else {
+                    const data = await response.json();
+                    const errMsg = data.detail || 'Incorrect username or password.';
+                    showLoginStatus(errMsg, 'error');
+                }
+            } catch (error) {
+                showLoginStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                loginSubmitBtn.disabled = false;
+            }
+        });
+    }
+
+    // Handle Logout
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', async () => {
+            if (confirm('Are you sure you want to log out?')) {
+                try {
+                    await fetch('/api/auth/logout', { method: 'POST' });
+                } catch (error) {
+                    console.error('Error during logout request:', error);
+                } finally {
+                    // Show login overlay again immediately and reset form
+                    if (loginOverlay) loginOverlay.classList.remove('hidden');
+                    if (settingsCard) settingsCard.classList.add('hidden');
+                    showLoginStatus('Logged out successfully.', 'system');
+                }
+            }
+        });
+    }
+
+    // Run auth status check on initialization
+    checkAuthStatus();
 });

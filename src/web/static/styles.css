@@ -1021,3 +1021,130 @@ textarea#text-content:focus {
         filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.5));
     }
 }
+
+/* --------------------------------------------------------------------------
+   16. Status Messages & Security Settings
+   -------------------------------------------------------------------------- */
+.status-message {
+    margin-top: 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    line-height: 1.4;
+    transition: all var(--transition-normal);
+    display: none;
+}
+
+.status-message.system {
+    display: block;
+    background: rgba(99, 102, 241, 0.1);
+    color: #8b5cf6;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.status-message.success {
+    display: block;
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    box-shadow: var(--shadow-glow-success);
+}
+
+.status-message.error {
+    display: block;
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   17. Header Actions, Settings Cog & Logout Buttons
+   -------------------------------------------------------------------------- */
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.icon-action-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 0.5rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-normal);
+}
+
+.icon-action-btn:hover {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.05);
+    transform: rotate(30deg);
+}
+
+.cog-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+.badge.danger-btn {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    transition: all var(--transition-fast);
+}
+
+.badge.danger-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+    color: #ff6b6b;
+}
+
+/* --------------------------------------------------------------------------
+   18. Login Overlay System
+   -------------------------------------------------------------------------- */
+.login-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.93);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity var(--transition-slow), visibility var(--transition-slow);
+    opacity: 1;
+    visibility: visible;
+}
+
+.login-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 420px;
+    margin: 1.5rem;
+    animation: loginReveal var(--transition-slow) forwards;
+}
+
+@keyframes loginReveal {
+    from {
+        opacity: 0;
+        transform: scale(0.96) translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
