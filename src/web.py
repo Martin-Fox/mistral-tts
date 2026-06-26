@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
+from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
 
 # Load environment variables from .env
@@ -162,7 +163,9 @@ async def run_generation_pipeline(
     voice_manual_id: Optional[str],
     source_lang: Optional[str],
     target_lang: Optional[str],
-    output_filename: str
+    output_filename: str,
+    engine: str = "mistral",
+    openai_key: Optional[str] = None
 ):
     """
     Asynchronous pipeline task that handles file translation, voice cloning,
@@ -208,7 +211,6 @@ async def run_generation_pipeline(
         from src.core.epub_parser import read_input_text
         text = read_input_text(text_path)
 
-
         # Generate cache key using parameters and inputs
         cache_key = get_cache_key(
             text=text,
@@ -222,14 +224,13 @@ async def run_generation_pipeline(
         cache_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = cache_dir / "manifest.json"
 
-        client = MistralTTSClient(api_key=api_key)
-
         # 3. Translation step
         if target_lang:
             progress_store[task_id]["status"] = "Translating"
             source = source_lang or "English"
             logger.info(f"Translating text from {source} to {target_lang}...")
-            translated_path = await client.translate_file(text_path, source, target_lang)
+            translation_client = MistralTTSClient(api_key=api_key)
+            translated_path = await translation_client.translate_file(text_path, source, target_lang)
             logger.info(f"Translation completed. Translated file: {translated_path}")
             with open(translated_path, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -243,20 +244,30 @@ async def run_generation_pipeline(
         if total_chunks == 0:
             raise ValueError("The split text has 0 chunks.")
 
+        # Resolve correct TTS API key and client
+        tts_api_key = openai_key if engine == "openai" else api_key
+        client = get_tts_client(engine, tts_api_key)
+
         # 5. Clone or configure voice
         progress_store[task_id]["status"] = "Configuring Voice"
-        if voice_path:
-            logger.info("Cloning voice profile from uploaded file...")
-            await client.clone_voice(voice_path)
-        elif voice_preset:
-            logger.info(f"Setting voice preset to: {voice_preset}")
-            client.set_voice_id(voice_preset)
-        elif voice_manual_id:
-            logger.info(f"Setting voice ID to: {voice_manual_id}")
-            client.set_voice_id(voice_manual_id)
+        if engine == "openai":
+            voice_id = voice_preset or voice_manual_id or "alloy"
+            logger.info(f"Setting OpenAI voice to: {voice_id}")
+            client.set_voice_id(voice_id)
         else:
-            logger.info("No voice specified. Defaulting to en_paul_neutral.")
-            client.set_voice_id("en_paul_neutral")
+            # engine == "mistral"
+            if voice_path:
+                logger.info("Cloning voice profile from uploaded file...")
+                await client.clone_voice(voice_path)
+            elif voice_preset:
+                logger.info(f"Setting voice preset to: {voice_preset}")
+                client.set_voice_id(voice_preset)
+            elif voice_manual_id:
+                logger.info(f"Setting voice ID to: {voice_manual_id}")
+                client.set_voice_id(voice_manual_id)
+            else:
+                logger.info("No voice specified. Defaulting to en_paul_neutral.")
+                client.set_voice_id("en_paul_neutral")
 
         # 6. Load manifest and generate audio chunks
         progress_store[task_id]["status"] = "Generating Audio"
@@ -470,6 +481,8 @@ async def generate_audiobook(
     target_lang: Optional[str] = Form(None),
     output_filename: str = Form("audiobook.mp3"),
     api_key: Optional[str] = Form(None),
+    engine: str = Form("mistral"),
+    openai_key: Optional[str] = Form(None),
     session: str = Depends(verify_session)
 ):
     """
@@ -479,11 +492,38 @@ async def generate_audiobook(
     if not text_file and not text_content:
         raise HTTPException(status_code=400, detail="Either text_file or text_content must be provided.")
 
-    # Resolve API key from form or environment fallback
-    resolved_api_key = (api_key or "").strip() or os.getenv("MISTRAL_API_KEY")
-    if not resolved_api_key:
-        raise HTTPException(status_code=400, detail="API key is required. Please enter it in the WebUI or set MISTRAL_API_KEY in your .env file.")
+    # Validate OpenAI voice cloning limitation
+    if engine == "openai":
+        if voice_file is not None and voice_file.filename and voice_file.filename.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="OpenAI TTS does not support voice cloning. Please select an OpenAI preset voice instead."
+            )
 
+    # Resolve API keys
+    resolved_mistral_key = (api_key or "").strip() or os.getenv("MISTRAL_API_KEY", "")
+    resolved_openai_key = (openai_key or "").strip() or os.getenv("OPENAI_API_KEY", "")
+
+    # Perform validation based on the selected engine and operations
+    if engine == "openai":
+        if not resolved_openai_key:
+            raise HTTPException(
+                status_code=400,
+                detail="OpenAI API key is required when using the OpenAI engine. Please provide it or set OPENAI_API_KEY."
+            )
+    else:
+        # engine == "mistral"
+        if not resolved_mistral_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Mistral API key is required. Please enter it in the WebUI or set MISTRAL_API_KEY."
+            )
+
+    if target_lang and not resolved_mistral_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Mistral API key is required for translation. Please enter it in the WebUI or set MISTRAL_API_KEY."
+        )
 
     # Sanitize and validate the output audiobook filename to prevent path traversal
     safe_filename = Path(output_filename).name
@@ -530,7 +570,8 @@ async def generate_audiobook(
     background_tasks.add_task(
         run_generation_pipeline,
         task_id=task_id,
-        api_key=resolved_api_key,
+        api_key=resolved_mistral_key,
+        openai_key=resolved_openai_key,
         text_content=text_content,
         text_file_data=text_file_data,
         voice_file_data=voice_file_data,
@@ -538,8 +579,8 @@ async def generate_audiobook(
         voice_manual_id=voice_manual_id,
         source_lang=source_lang,
         target_lang=target_lang,
-        output_filename=safe_filename
+        output_filename=safe_filename,
+        engine=engine
     )
-
 
     return {"task_id": task_id}

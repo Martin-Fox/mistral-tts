@@ -7,6 +7,7 @@ from textual.widgets import Header, Footer, Input, Button, Label, ProgressBar, L
 
 from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
+from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
 
 class BooksmithTUI(App):
@@ -54,10 +55,19 @@ class BooksmithTUI(App):
         ("Paul (Male - Neutral)", "en_paul_neutral"),
         ("Sarah (Female - Expressive)", "en_sarah_expressive"),
     ]
+    OPENAI_VOICES = [
+        ("Alloy (Neutral)", "alloy"),
+        ("Echo (Balanced)", "echo"),
+        ("Fable (Narrative)", "fable"),
+        ("Onyx (Deep/Male)", "onyx"),
+        ("Nova (Energetic/Female)", "nova"),
+        ("Shimmer (Professional)", "shimmer"),
+    ]
 
     def compose(self) -> ComposeResult:
         load_dotenv()
         api_key = os.getenv("MISTRAL_API_KEY", "")
+        openai_key = os.getenv("OPENAI_API_KEY", "")
         
         yield Header()
         with Container():
@@ -71,6 +81,9 @@ class BooksmithTUI(App):
                 with Horizontal(classes="form-row"):
                     yield Label("Target Lang:", classes="form-label")
                     yield Input(placeholder="e.g. Spanish (optional)", id="target-lang")
+                with Horizontal(classes="form-row"):
+                    yield Label("TTS Engine:", classes="form-label")
+                    yield Select([("Mistral", "mistral"), ("OpenAI", "openai")], value="mistral", id="engine-select")
                 with Horizontal(classes="form-row"):
                     yield Label("Default Voice:", classes="form-label")
                     yield Select(self.DEFAULT_VOICES, prompt="Select a default voice", id="voice-select")
@@ -86,6 +99,9 @@ class BooksmithTUI(App):
                 with Horizontal(classes="form-row"):
                     yield Label("API Key:", classes="form-label")
                     yield Input(value=api_key, placeholder="Mistral AI API Key", password=True, id="api-key")
+                with Horizontal(classes="form-row"):
+                    yield Label("OpenAI Key:", classes="form-label")
+                    yield Input(value=openai_key, placeholder="OpenAI API Key (optional if in .env)", password=True, id="openai-key")
                 
                 yield Button("Start Generation", variant="success", id="start-btn")
             
@@ -101,6 +117,26 @@ class BooksmithTUI(App):
         if event.button.id == "start-btn":
             self.start_processing()
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "engine-select":
+            engine = event.value
+            voice_select = self.query_one("#voice-select", Select)
+            voice_path_input = self.query_one("#voice-path", Input)
+            manual_voice_id_input = self.query_one("#manual-voice-id", Input)
+            
+            if engine == "openai":
+                voice_select.set_options(self.OPENAI_VOICES)
+                voice_select.value = "alloy"
+                voice_path_input.value = ""
+                voice_path_input.disabled = True
+                manual_voice_id_input.value = ""
+                manual_voice_id_input.disabled = True
+            else:
+                voice_select.set_options(self.DEFAULT_VOICES)
+                voice_select.value = "en_paul_neutral"
+                voice_path_input.disabled = False
+                manual_voice_id_input.disabled = False
+
     def log_message(self, message: str):
         self.query_one("#log", Log).write_line(message)
 
@@ -111,11 +147,30 @@ class BooksmithTUI(App):
         manual_voice_id = self.query_one("#manual-voice-id", Input).value.strip()
         output_path = self.query_one("#output-path", Input).value.strip()
         api_key = self.query_one("#api-key", Input).value.strip()
+        openai_key = self.query_one("#openai-key", Input).value.strip()
+        engine = self.query_one("#engine-select", Select).value
         source_lang = self.query_one("#source-lang", Input).value.strip()
         target_lang = self.query_one("#target-lang", Input).value.strip()
 
-        if not text_path or not output_path or not api_key:
-            self.log_message("Error: Text Path, Output Path, and API Key are required.")
+        if not text_path or not output_path:
+            self.log_message("Error: Text Path and Output Path are required.")
+            return
+
+        if engine == "mistral" and not api_key:
+            self.log_message("Error: Mistral API Key is required for the Mistral engine.")
+            return
+
+        resolved_openai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
+        if engine == "openai":
+            if voice_path:
+                self.log_message("Error: OpenAI TTS does not support voice cloning. Please select an OpenAI preset voice instead.")
+                return
+            if not resolved_openai_key:
+                self.log_message("Error: OpenAI API Key is required for the OpenAI engine.")
+                return
+
+        if target_lang and not api_key:
+            self.log_message("Error: Mistral API Key is required for translation.")
             return
 
         # Priority: Manual ID > Select List > Voice Path
@@ -127,9 +182,30 @@ class BooksmithTUI(App):
 
         self.query_one("#start-btn", Button).disabled = True
         self.query_one("#status-label", Static).update("Status: Initializing...")
-        self.run_worker(self.process_book(text_path, voice_path, final_voice_id, output_path, api_key, source_lang, target_lang))
+        self.run_worker(self.process_book(
+            text_path=text_path,
+            voice_path=voice_path,
+            voice_id=final_voice_id,
+            output_path=output_path,
+            api_key=api_key,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            engine=engine,
+            openai_key=resolved_openai_key
+        ))
 
-    async def process_book(self, text_path: str, voice_path: str, voice_id: str, output_path: str, api_key: str, source_lang: str = "", target_lang: str = ""):
+    async def process_book(
+        self,
+        text_path: str,
+        voice_path: str,
+        voice_id: str,
+        output_path: str,
+        api_key: str,
+        source_lang: str = "",
+        target_lang: str = "",
+        engine: str = "mistral",
+        openai_key: str = ""
+    ):
         try:
             tp = Path(text_path)
             op = Path(output_path)
@@ -142,14 +218,22 @@ class BooksmithTUI(App):
             cache_dir.mkdir(parents=True, exist_ok=True)
 
             splitter = TextSplitter()
-            client = MistralTTSClient(api_key=api_key)
+            
+            # Resolve correct TTS API key
+            tts_api_key = openai_key if engine == "openai" else api_key
+            # Instantiate client via factory
+            client = get_tts_client(engine, tts_api_key)
+            
             compiler = AudioCompiler()
 
             if target_lang:
+                if not api_key:
+                    raise ValueError("Mistral API key is required for translation.")
                 source = source_lang if source_lang else "English"
                 self.query_one("#status-label", Static).update(f"Status: Translating to {target_lang}...")
                 self.log_message(f"Translating {tp.name} from {source} to {target_lang}...")
-                tp = await client.translate_file(tp, source, target_lang)
+                translation_client = MistralTTSClient(api_key=api_key)
+                tp = await translation_client.translate_file(tp, source, target_lang)
                 self.log_message(f"Translation completed. Saved to {tp}")
 
             self.log_message("Reading text and splitting into chunks...")
@@ -158,16 +242,19 @@ class BooksmithTUI(App):
             chunks = splitter.split(text)
             self.log_message(f"Split into {len(chunks)} chunks.")
 
-
-            if voice_path:
-                vp = Path(voice_path)
-                if not vp.exists():
-                    raise FileNotFoundError(f"Voice file not found: {vp}")
-                self.log_message(f"Cloning voice from {vp}...")
-                await client.clone_voice(vp)
-            else:
-                self.log_message(f"Using default voice: {voice_id}")
+            if engine == "openai":
+                self.log_message(f"Using OpenAI voice: {voice_id}")
                 client.set_voice_id(voice_id)
+            else:  # engine == "mistral"
+                if voice_path:
+                    vp = Path(voice_path)
+                    if not vp.exists():
+                        raise FileNotFoundError(f"Voice file not found: {vp}")
+                    self.log_message(f"Cloning voice from {vp}...")
+                    await client.clone_voice(vp)
+                else:
+                    self.log_message(f"Using default voice: {voice_id}")
+                    client.set_voice_id(voice_id)
             
             pb = self.query_one("#progress-bar", ProgressBar)
             pb.total = len(chunks)
@@ -191,7 +278,7 @@ class BooksmithTUI(App):
             
         except Exception as e:
             self.log_message(f"Error: {str(e)}")
-            if "invalid model" in str(e).lower():
+            if "invalid model" in str(e).lower() and hasattr(client, "list_models"):
                 self.log_message("Attempting to fetch available models...")
                 models = await client.list_models()
                 if models:

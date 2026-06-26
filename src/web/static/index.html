@@ -80,26 +80,59 @@
             <!-- Form Card (Configuration) -->
             <section class="card form-card">
                 <form id="generator-form" novalidate>
-                    <!-- API Key Section -->
+                    <!-- Engine & Authentication Section -->
                     <div class="form-group">
-                        <label for="api-key" class="group-label">
+                        <span class="group-label">
                             <svg class="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                                 <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                             </svg>
-                            <span>Mistral API Authentication</span>
-                        </label>
-                        <div class="password-input-container">
-                            <input type="password" id="api-key" name="api_key" placeholder="Enter your Mistral API Key (optional if in .env)" autocomplete="current-password">
-                            <button type="button" id="toggle-api-visibility" class="toggle-visibility-btn" aria-label="Toggle API key visibility">
-                                <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                    <circle cx="12" cy="12" r="3"></circle>
-                                </svg>
-                            </button>
-                        </div>
-                        <p class="field-help">Optional if <code>MISTRAL_API_KEY</code> is configured in your <code>.env</code> file. Stored securely in your browser's local storage.</p>
+                            <span>Engine & Authentication</span>
+                        </span>
 
+                        <!-- TTS Engine Selection -->
+                        <div class="select-field" style="margin-bottom: 1.25rem;">
+                            <label for="engine" class="field-label">TTS Engine</label>
+                            <div class="custom-select-wrapper">
+                                <select id="engine" name="engine">
+                                    <option value="mistral" selected>Mistral Voxtral</option>
+                                    <option value="openai">OpenAI TTS</option>
+                                </select>
+                                <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </div>
+                        </div>
+
+                        <!-- Mistral API Key Container -->
+                        <div id="mistral-key-group" class="key-input-group">
+                            <label for="api-key" class="field-label">Mistral API Key</label>
+                            <div class="password-input-container">
+                                <input type="password" id="api-key" name="api_key" placeholder="Enter your Mistral API Key (optional if in .env)" autocomplete="current-password">
+                                <button type="button" id="toggle-api-visibility" class="toggle-visibility-btn" aria-label="Toggle API key visibility">
+                                    <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                </button>
+                            </div>
+                            <p class="field-help">Optional if <code>MISTRAL_API_KEY</code> is configured in your <code>.env</code> file. Stored locally.</p>
+                        </div>
+
+                        <!-- OpenAI API Key Container -->
+                        <div id="openai-key-group" class="key-input-group" style="display: none; margin-top: 1rem;">
+                            <label for="openai-key" class="field-label">OpenAI API Key</label>
+                            <div class="password-input-container">
+                                <input type="password" id="openai-key" name="openai_key" placeholder="Enter your OpenAI API Key (optional if in .env)">
+                                <button type="button" id="toggle-openai-visibility" class="toggle-visibility-btn" aria-label="Toggle OpenAI key visibility">
+                                    <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                </button>
+                            </div>
+                            <p class="field-help">Optional if <code>OPENAI_API_KEY</code> is configured in your <code>.env</code> file. Stored locally.</p>
+                        </div>
                     </div>
 
                     <!-- Text Input Section -->
