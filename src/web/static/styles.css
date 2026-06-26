@@ -479,6 +479,14 @@ select:focus {
     box-shadow: var(--shadow-md);
 }
 
+.tab-button.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+    filter: grayscale(1);
+    transition: opacity var(--transition-normal), filter var(--transition-normal);
+}
+
 /* Tab Panels */
 .tab-panel {
     display: none;

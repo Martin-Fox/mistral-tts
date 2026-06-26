@@ -11,6 +11,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleApiVisibilityBtn = document.getElementById('toggle-api-visibility');
     const translationToggle = document.getElementById('translation-toggle');
     const translationSubform = document.getElementById('translation-subform');
+    const engineSelect = document.getElementById('engine');
+    const openaiKeyInput = document.getElementById('openai-key');
+    const toggleOpenaiVisibilityBtn = document.getElementById('toggle-openai-visibility');
+    const openaiKeyGroup = document.getElementById('openai-key-group');
+    const mistralKeyGroup = document.getElementById('mistral-key-group');
     
     const submitBtn = document.getElementById('submit-btn');
     const submitBtnText = submitBtn.querySelector('.submit-btn-text');
@@ -35,6 +40,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedApiKey = localStorage.getItem('api_key');
     if (savedApiKey) {
         apiKeyInput.value = savedApiKey;
+    }
+    const savedOpenaiKey = localStorage.getItem('openai_key');
+    if (savedOpenaiKey && openaiKeyInput) {
+        openaiKeyInput.value = savedOpenaiKey;
     }
     
     // Toggle API Key visibility
@@ -61,6 +70,33 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
     });
+
+    // Toggle OpenAI API Key visibility
+    if (toggleOpenaiVisibilityBtn && openaiKeyInput) {
+        toggleOpenaiVisibilityBtn.addEventListener('click', () => {
+            const isPassword = openaiKeyInput.type === 'password';
+            openaiKeyInput.type = isPassword ? 'text' : 'password';
+            
+            // Update the eye icon SVG to reflect current state
+            if (isPassword) {
+                // Change to eye-off (slashed) icon
+                toggleOpenaiVisibilityBtn.innerHTML = `
+                    <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                    </svg>
+                `;
+            } else {
+                // Change back to standard eye icon
+                toggleOpenaiVisibilityBtn.innerHTML = `
+                    <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                `;
+            }
+        });
+    }
 
     // === 2. Form Tab Controls ===
     const voiceModeRadios = document.querySelectorAll('input[name="voice_mode"]');
@@ -90,6 +126,100 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize correct voice panel on load
     updateVoicePanels();
+
+    // === 2b. TTS Engine & Voice Preset Selection ===
+    const MISTRAL_VOICE_HTML = `
+        <optgroup label="English (US)">
+            <option value="en_paul_neutral" selected>Paul - Neutral (Male)</option>
+            <option value="en_paul_cheerful">Paul - Cheerful (Male)</option>
+            <option value="en_paul_confident">Paul - Confident (Male)</option>
+            <option value="en_paul_excited">Paul - Excited (Male)</option>
+        </optgroup>
+        <optgroup label="English (UK)">
+            <option value="gb_oliver_neutral">Oliver - Neutral (Male)</option>
+            <option value="gb_oliver_cheerful">Oliver - Cheerful (Male)</option>
+            <option value="gb_jane_neutral">Jane - Neutral (Female)</option>
+            <option value="gb_jane_confident">Jane - Confident (Female)</option>
+            <option value="gb_jane_sarcasm">Jane - Sarcasm (Female)</option>
+        </optgroup>
+        <optgroup label="French">
+            <option value="fr_marie_neutral">Marie - Neutral (Female)</option>
+            <option value="fr_marie_happy">Marie - Happy (Female)</option>
+            <option value="fr_marie_excited">Marie - Excited (Female)</option>
+            <option value="fr_marie_curious">Marie - Curious (Female)</option>
+        </optgroup>
+    `;
+
+    const OPENAI_VOICE_HTML = `
+        <optgroup label="OpenAI Presets">
+            <option value="alloy" selected>Alloy</option>
+            <option value="echo">Echo</option>
+            <option value="fable">Fable</option>
+            <option value="onyx">Onyx</option>
+            <option value="nova">Nova</option>
+            <option value="shimmer">Shimmer</option>
+        </optgroup>
+    `;
+
+    if (engineSelect) {
+        engineSelect.addEventListener('change', () => {
+            const isOpenAI = engineSelect.value === 'openai';
+            
+            // Toggle API key visibility groups
+            if (isOpenAI) {
+                if (openaiKeyGroup) openaiKeyGroup.style.display = 'block';
+                if (mistralKeyGroup) mistralKeyGroup.style.display = 'none';
+            } else {
+                if (openaiKeyGroup) openaiKeyGroup.style.display = 'none';
+                if (mistralKeyGroup) mistralKeyGroup.style.display = 'block';
+            }
+            
+            // Update voice list presets
+            const voicePresetSelect = document.getElementById('voice-preset');
+            if (voicePresetSelect) {
+                voicePresetSelect.innerHTML = isOpenAI ? OPENAI_VOICE_HTML : MISTRAL_VOICE_HTML;
+            }
+            
+            // Tab controls
+            const presetRadio = document.querySelector('input[name="voice_mode"][value="preset"]');
+            const manualRadio = document.querySelector('input[name="voice_mode"][value="manual"]');
+            const cloneRadio = document.querySelector('input[name="voice_mode"][value="clone"]');
+            
+            if (manualRadio && cloneRadio) {
+                const manualLabel = manualRadio.closest('.tab-button');
+                const cloneLabel = cloneRadio.closest('.tab-button');
+                
+                if (isOpenAI) {
+                    // Disable manual and clone
+                    manualRadio.disabled = true;
+                    cloneRadio.disabled = true;
+                    
+                    // Add disabled class to labels
+                    if (manualLabel) manualLabel.classList.add('disabled');
+                    if (cloneLabel) cloneLabel.classList.add('disabled');
+                    
+                    // Force preset to be checked
+                    if (presetRadio) {
+                        presetRadio.checked = true;
+                    }
+                    
+                    // Activate preset panel
+                    updateVoicePanels();
+                } else {
+                    // Enable manual and clone
+                    manualRadio.disabled = false;
+                    cloneRadio.disabled = false;
+                    
+                    // Remove disabled class from labels
+                    if (manualLabel) manualLabel.classList.remove('disabled');
+                    if (cloneLabel) cloneLabel.classList.remove('disabled');
+                }
+            }
+        });
+
+        // Trigger once on initialization to sync with current select state
+        engineSelect.dispatchEvent(new Event('change'));
+    }
 
     // === 3. Translation Toggle ===
     translationToggle.addEventListener('change', () => {
@@ -205,6 +335,13 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem('api_key', apiKey);
         } else {
             localStorage.removeItem('api_key');
+        }
+
+        const openaiKey = openaiKeyInput ? openaiKeyInput.value.trim() : '';
+        if (openaiKey) {
+            localStorage.setItem('openai_key', openaiKey);
+        } else {
+            localStorage.removeItem('openai_key');
         }
 
 
