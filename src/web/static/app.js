@@ -325,7 +325,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const hasTextContent = textContentInput.value.trim().length > 0;
 
         if (!hasTextFile && !hasTextContent) {
-            alert('Please upload a text file (.txt, .srt) or paste text content manually.');
+            alert('Please upload a file (.txt, .srt, .epub, .mobi) or paste text content manually.');
             textContentInput.focus();
             return;
         }
