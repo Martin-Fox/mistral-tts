@@ -97,6 +97,7 @@ def test_generate_success(mock_run_pipeline):
     mock_run_pipeline.assert_called_once_with(
         task_id=task_id,
         api_key="test_api_key",
+        openai_key="",
         text_content="This is some test content for audiobook generation.",
         text_file_data=None,
         voice_file_data=None,
@@ -104,7 +105,8 @@ def test_generate_success(mock_run_pipeline):
         voice_manual_id=None,
         source_lang=None,
         target_lang=None,
-        output_filename="audiobook.mp3"
+        output_filename="audiobook.mp3",
+        engine="mistral"
     )
 
     # Clean up progress_store
@@ -292,4 +294,37 @@ def test_change_password_too_short():
             assert "New password must be at least 4 characters long" in response.json()["detail"]
         finally:
             app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_generate_openai_voice_cloning_error():
+    """Assert that requesting OpenAI TTS with an uploaded voice_file returns status code 400."""
+    data = {
+        "engine": "openai",
+        "voice_preset": "alloy",
+        "text_content": "Hello",
+        "output_filename": "audiobook.mp3",
+        "openai_key": "test_openai_key"
+    }
+    files = {
+        "voice_file": ("voice.wav", b"fake-audio")
+    }
+    response = client.post("/api/generate", data=data, files=files)
+    assert response.status_code == 400
+    assert "does not support voice cloning" in response.json()["detail"]
+
+
+@patch("os.getenv", return_value=None)
+def test_generate_openai_missing_key_error(mock_getenv):
+    """Assert that omitting or providing an empty OpenAI API key returns status code 400 when not in env."""
+    data = {
+        "engine": "openai",
+        "text_content": "Hello",
+        "voice_preset": "alloy",
+        "output_filename": "audiobook.mp3",
+        "openai_key": "   "
+    }
+    response = client.post("/api/generate", data=data)
+    assert response.status_code == 400
+    assert "OpenAI API key is required" in response.json()["detail"]
+
 
