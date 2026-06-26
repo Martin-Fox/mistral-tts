@@ -184,6 +184,10 @@ docker run --rm \
 - [ ] **Multi-User Login:** Support multiple user accounts and sessions, paving the way for personalized histories, settings, and task queues.
 - [ ] **CLI User Management:** Add command-line interface options to create, update, and manage user accounts securely, keeping user-creation tools out of the WebUI.
 - [ ] **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a SQLite database.
+- [ ] **EPUB Support:** Ingest and parse EPUB files to extract chapters while preserving document structure.
+- [ ] **MOBI Support:** Ingest and parse MOBI files to extract chapters for synthesis.
+- [ ] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
+
 
 
 ## ⚖️ License
