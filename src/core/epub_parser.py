@@ -173,14 +173,62 @@ def extract_text_from_epub(epub_path: Path) -> str:
 
         return "\n\n".join(full_text)
 
+def extract_text_from_mobi(mobi_path: Path) -> str:
+    """
+    Extracts and merges all text content from an unencrypted MOBI file
+    using the mobi library and our HTML parser.
+    """
+    import mobi
+    import shutil
+
+    if not mobi_path.exists():
+        raise FileNotFoundError(f"MOBI file not found: {mobi_path}")
+
+    tempdir = None
+    try:
+        # Extract MOBI to a temporary directory
+        tempdir, filepath_str = mobi.extract(str(mobi_path))
+        filepath = Path(filepath_str)
+        
+        if not filepath.exists():
+            raise FileNotFoundError(f"Extracted MOBI content not found at {filepath_str}")
+
+        suffix = filepath.suffix.lower()
+        if suffix in {".html", ".xhtml", ".htm"}:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                html_content = f.read()
+            extractor = HTMLTextExtractor()
+            extractor.feed(html_content)
+            text = extractor.get_text()
+        else:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+
+        if not text.strip():
+            raise ValueError("MOBI file contains no readable text content.")
+
+        return text
+    except Exception as e:
+        logger.error(f"Failed to extract text from MOBI file {mobi_path}: {e}")
+        raise ValueError(f"Failed to parse MOBI file: {e}")
+    finally:
+        # Clean up temporary directory
+        if tempdir and Path(tempdir).exists():
+            try:
+                shutil.rmtree(tempdir)
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary MOBI extraction directory {tempdir}: {e}")
+
 def read_input_text(file_path: Path) -> str:
     """
-    Reads the text content of a file. Supports .epub, and defaults to plain text.
+    Reads the text content of a file. Supports .epub, .mobi, and defaults to plain text.
     Handles encoding issues robustly.
     """
     suffix = file_path.suffix.lower()
     if suffix == ".epub":
         return extract_text_from_epub(file_path)
+    elif suffix == ".mobi":
+        return extract_text_from_mobi(file_path)
     else:
         # Try reading as UTF-8 first, fallback to ignore errors if it fails
         try:
@@ -189,4 +237,5 @@ def read_input_text(file_path: Path) -> str:
         except UnicodeDecodeError:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 return f.read()
+
 

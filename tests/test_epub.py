@@ -82,3 +82,38 @@ def test_read_input_text_plain_text():
         
         text = read_input_text(txt_path)
         assert text == "Hello plain text world."
+
+def test_extract_text_from_mobi():
+    from unittest.mock import patch
+    from src.core.epub_parser import extract_text_from_mobi
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a subdirectory for the mock extraction
+        extraction_dir = Path(tmpdir) / "extraction"
+        extraction_dir.mkdir()
+        extracted_html_path = extraction_dir / "mobi_content.html"
+        extracted_html_path.write_text("<html><body><h1>MOBI Chapter</h1><p>This is extracted from MOBI.</p></body></html>", encoding="utf-8")
+        
+        mobi_file_path = Path(tmpdir) / "book.mobi"
+        mobi_file_path.write_text("fake binary mobi content", encoding="utf-8")
+        
+        # Patch mobi.extract to return our mock paths
+        with patch("mobi.extract") as mock_extract:
+            mock_extract.return_value = (str(extraction_dir), str(extracted_html_path))
+            
+            text = extract_text_from_mobi(mobi_file_path)
+            
+            assert "MOBI Chapter" in text
+            assert "This is extracted from MOBI." in text
+            assert "<html>" not in text
+            assert "<p>" not in text
+            
+            # Recreate the directory and file since the first call's finally block cleaned it up
+            extraction_dir.mkdir(exist_ok=True)
+            extracted_html_path.write_text("<html><body><h1>MOBI Chapter</h1><p>This is extracted from MOBI.</p></body></html>", encoding="utf-8")
+
+            # Verify read_input_text routing
+            generic_text = read_input_text(mobi_file_path)
+            assert generic_text == text
+
+
