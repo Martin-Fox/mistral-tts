@@ -6,16 +6,18 @@ import re
 from pathlib import Path
 from typing import Optional
 from mistralai.client import Mistral
+from src.api.base_client import BaseTTSClient
 
 logger = logging.getLogger(__name__)
 
-class MistralTTSClient:
+class MistralTTSClient(BaseTTSClient):
     """
     Wrapper for Mistral AI Voxtral API interaction, including voice cloning
     and asynchronous text-to-speech generation.
     """
 
     def __init__(self, api_key: str):
+        super().__init__(api_key)
         self.client = Mistral(api_key=api_key.strip())
         self.model = "voxtral-mini-tts-2603"
         self.voice_sample_path: Optional[Path] = None
