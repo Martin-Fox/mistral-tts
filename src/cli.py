@@ -57,11 +57,12 @@ class BooksmithCLI:
 
         # 1. Read input text
         with console.status("[bold green]Reading input text..."):
-            with open(text_path, "r") as f:
-                text = f.read()
+            from src.core.epub_parser import read_input_text
+            text = read_input_text(text_path)
             # 2. Split text
             chunks = self.splitter.split(text)
             logger.info(f"Text split into {len(chunks)} semantic chunks.")
+
 
         # 3. Clone voice
         with console.status("[bold cyan]Cloning voice profile..."):

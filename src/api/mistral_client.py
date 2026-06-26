@@ -173,28 +173,39 @@ class MistralTTSClient:
 
     async def translate_file(self, input_path: Path, source_lang: str, target_lang: str) -> Path:
         """
-        Translates a text or srt file and saves it in storage/translations/.
+        Translates a text, srt, epub, or mobi file and saves it in storage/translations/.
         Returns the path to the translated file.
         """
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
+        # Determine file type
+        suffix = input_path.suffix.lower()
+        is_srt = suffix == ".srt"
+
         # Read input content
-        with open(input_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        if suffix == ".epub":
+            from src.core.epub_parser import extract_text_from_epub
+            content = extract_text_from_epub(input_path)
+        elif suffix == ".mobi":
+            from src.core.epub_parser import extract_text_from_mobi
+            content = extract_text_from_mobi(input_path)
+        else:
+            with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
 
         # Normalize line endings
         content = content.replace("\r\n", "\n")
-
-        # Determine file type and translate
-        is_srt = input_path.suffix.lower() == ".srt"
         
         # Prepare output directory
         translations_dir = Path("storage/translations")
         translations_dir.mkdir(parents=True, exist_ok=True)
         
-        output_filename = f"{input_path.stem}_translated_{target_lang.lower().replace(' ', '_')}{input_path.suffix}"
+        output_suffix = ".txt" if suffix in {".epub", ".mobi"} else input_path.suffix
+        output_filename = f"{input_path.stem}_translated_{target_lang.lower().replace(' ', '_')}{output_suffix}"
         output_path = translations_dir / output_filename
+
+
 
         if is_srt:
             # Parse SRT blocks

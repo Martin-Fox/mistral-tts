@@ -115,3 +115,82 @@ I am doing great, thank you!
             assert "Hola, ¿cómo estás?" in content
             assert "00:00:05,000 --> 00:00:08,000" in content
             assert "¡Estoy genial, gracias!" in content
+
+
+@pytest.mark.anyio
+async def test_translate_file_epub():
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+    
+    # Mock text translation response
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Capítulo Uno: Hola Mundo."
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    from tests.test_epub import create_mock_epub
+    chapters = [
+        ("chapter1.xhtml", "<html><body><h1>Chapter One: Hello World.</h1></body></html>")
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_file = Path(tmpdir) / "test.epub"
+        create_mock_epub(input_file, chapters)
+        
+        with patch("src.api.mistral_client.Path") as mock_path:
+            def path_side_effect(*args):
+                if len(args) == 1 and args[0] == "storage/translations":
+                    return Path(tmpdir)
+                return Path(*args)
+                
+            mock_path.side_effect = path_side_effect
+            
+            out_file = await client.translate_file(input_file, "English", "Spanish")
+            
+            assert out_file.exists()
+            assert out_file.suffix == ".txt"
+            content = out_file.read_text(encoding="utf-8")
+            assert "Capítulo Uno: Hola Mundo." in content
+
+
+@pytest.mark.anyio
+async def test_translate_file_mobi():
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+    
+    # Mock text translation response
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Capítulo Uno: Hola Mundo."
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mobi_file_path = Path(tmpdir) / "book.mobi"
+        mobi_file_path.write_text("fake binary mobi content", encoding="utf-8")
+        
+        # Create a mock extracted html file
+        extraction_dir = Path(tmpdir) / "extraction"
+        extraction_dir.mkdir()
+        extracted_html_path = extraction_dir / "mobi_content.html"
+        extracted_html_path.write_text("<html><body><h1>Chapter One: Hello World.</h1></body></html>", encoding="utf-8")
+        
+        with patch("mobi.extract") as mock_extract, patch("src.api.mistral_client.Path") as mock_path:
+            mock_extract.return_value = (str(extraction_dir), str(extracted_html_path))
+            
+            def path_side_effect(*args):
+                if len(args) == 1 and args[0] == "storage/translations":
+                    return Path(tmpdir)
+                return Path(*args)
+                
+            mock_path.side_effect = path_side_effect
+            
+            out_file = await client.translate_file(mobi_file_path, "English", "Spanish")
+            
+            assert out_file.exists()
+            assert out_file.suffix == ".txt"
+            content = out_file.read_text(encoding="utf-8")
+            assert "Capítulo Uno: Hola Mundo." in content
+
+

@@ -205,8 +205,9 @@ async def run_generation_pipeline(
             logger.info(f"Saved uploaded voice file to {voice_path}")
 
         # Read base text content
-        with open(text_path, "r", encoding="utf-8") as f:
-            text = f.read()
+        from src.core.epub_parser import read_input_text
+        text = read_input_text(text_path)
+
 
         # Generate cache key using parameters and inputs
         cache_key = get_cache_key(

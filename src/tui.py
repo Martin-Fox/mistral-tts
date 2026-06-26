@@ -153,10 +153,11 @@ class BooksmithTUI(App):
                 self.log_message(f"Translation completed. Saved to {tp}")
 
             self.log_message("Reading text and splitting into chunks...")
-            with open(tp, "r") as f:
-                text = f.read()
+            from src.core.epub_parser import read_input_text
+            text = read_input_text(tp)
             chunks = splitter.split(text)
             self.log_message(f"Split into {len(chunks)} chunks.")
+
 
             if voice_path:
                 vp = Path(voice_path)
