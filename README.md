@@ -6,7 +6,9 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 
 - **Interactive WebUI:** A premium, responsive single-page web application featuring glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, an in-browser console terminal streaming live server logs via Server-Sent Events (SSE), and a custom audio player for instant playback.
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
-- **Integrated Translation:** Translate `.txt` and `.srt` source files from a source language to a target language using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
+- **Integrated Translation:** Translate source files from a source language to a target language using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
+- **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`), and electronic books (`.epub` and unencrypted `.mobi`), automatically extracting content in the correct reading order.
+
 
 - **Zero-Shot Voice Cloning:** Instantly clones any voice profile using a 3-to-10-second reference audio sample.
 - **Preset Voice Selection:** Choose from high-quality default Mistral voices (e.g., Paul, Sarah) without needing a sample.
@@ -88,7 +90,7 @@ python3 src/cli.py --text <path_to_text_file> \
 | Flag | Description |
 | --- | --- |
 | `--tui` | Launches the interactive Terminal User Interface. |
-| `--text` | Path to the source `.txt` or `.srt` file. |
+| `--text` | Path to the source file (`.txt`, `.srt`, `.epub`, or `.mobi`). |
 | `--source-lang` | (Optional) Source language of the input file (e.g., `Polish`). Defaults to `English`. |
 | `--target-lang` | (Optional) Target language to translate the text into before generating speech (e.g., `English`). |
 | `--voice` | Path to a short `.mp3` or `.wav` sample for cloning. |
