@@ -1,10 +1,11 @@
 import json
+import time
 from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from src.web import app, progress_store, get_audio, verify_session
+from src.web import app, db, progress_store, get_audio, verify_session
 
 # Bypass authentication by default in tests
 app.dependency_overrides[verify_session] = lambda: "session-id"
@@ -46,18 +47,18 @@ def test_get_progress_not_found():
     assert "Task not found" in response.json()["detail"]
 
 def test_get_progress_success():
-    """Assert that a valid task_id registered in progress_store returns an SSE stream containing task status JSON."""
+    """Assert that a valid task_id registered in db returns an SSE stream containing task status JSON."""
     task_id = "test-task-success"
-    task_state = {
-        "percentage": 100,
-        "status": "Completed",
-        "logs": ["Done"],
-        "completed": True,
-        "audio_file": "audiobook.mp3",
-        "error": None,
-        "created_at": 1719222222.0
-    }
-    progress_store[task_id] = task_state
+    db.create_task(task_id)
+    db.update_task(
+        task_id=task_id,
+        percentage=100,
+        status="Completed",
+        completed=True,
+        audio_file="audiobook.mp3",
+        error=None
+    )
+    db.add_log(task_id, "Done")
 
     try:
         response = client.get(f"/api/progress?task_id={task_id}")
@@ -66,11 +67,22 @@ def test_get_progress_success():
 
         # Verify the yielded SSE event content
         content = response.text
-        expected_event = f"data: {json.dumps(task_state)}\n\n"
-        assert expected_event in content
+        assert content.startswith("data: ")
+        data_json = json.loads(content.split("\n\n")[0].replace("data: ", ""))
+        assert data_json["percentage"] == 100
+        assert data_json["status"] == "Completed"
+        assert data_json["completed"] is True
+        assert data_json["audio_file"] == "audiobook.mp3"
+        assert data_json["error"] is None
+        assert data_json["logs"] == ["Done"]
+        assert "last_log_id" in data_json
     finally:
-        if task_id in progress_store:
-            del progress_store[task_id]
+        conn = db._get_connection()
+        try:
+            with conn:
+                conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        finally:
+            conn.close()
 
 @patch("src.web.run_generation_pipeline")
 def test_generate_success(mock_run_pipeline):
@@ -93,6 +105,13 @@ def test_generate_success(mock_run_pipeline):
     assert progress_store[task_id]["percentage"] == 0
     assert progress_store[task_id]["completed"] is False
 
+    # Verify that the task_id is registered in db
+    task_db_state = db.get_task(task_id)
+    assert task_db_state is not None
+    assert task_db_state["status"] == "Pending"
+    assert task_db_state["percentage"] == 0
+    assert task_db_state["completed"] is False
+
     # Verify that the background pipeline function is called exactly once with correct parameters
     mock_run_pipeline.assert_called_once_with(
         task_id=task_id,
@@ -109,9 +128,15 @@ def test_generate_success(mock_run_pipeline):
         engine="mistral"
     )
 
-    # Clean up progress_store
+    # Clean up progress_store and db
     if task_id in progress_store:
         del progress_store[task_id]
+    conn = db._get_connection()
+    try:
+        with conn:
+            conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    finally:
+        conn.close()
 
 def test_generate_missing_text():
     """Assert that omitting text_file and text_content returns a client error status code 400."""

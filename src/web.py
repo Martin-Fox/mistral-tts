@@ -450,20 +450,41 @@ def get_audio(filename: str, session: str = Depends(verify_session)):
     return FileResponse(file_path, media_type="audio/mpeg")
 
 @app.get("/api/progress")
-async def get_progress(task_id: str = Query(...), session: str = Depends(verify_session)):
+async def get_progress(
+    task_id: str = Query(...),
+    last_log_id: int = Query(0),
+    session: str = Depends(verify_session)
+):
     """
     Returns an SSE stream yielding progress updates as JSON-encoded string events.
     """
-    if task_id not in progress_store:
+    task_state = db.get_task(task_id)
+    if not task_state:
         raise HTTPException(status_code=404, detail="Task not found")
 
     async def event_generator():
+        current_last_id = last_log_id
         while True:
-            task_state = progress_store.get(task_id)
+            task_state = db.get_task(task_id)
             if not task_state:
                 break
-            yield f"data: {json.dumps(task_state)}\n\n"
-            if task_state.get("completed") or task_state.get("error") or task_state.get("status") == "Failed":
+            
+            new_logs = db.get_logs(task_id, after_id=current_last_id)
+            if new_logs:
+                current_last_id = new_logs[-1]["id"]
+            
+            payload = {
+                "percentage": task_state["percentage"],
+                "status": task_state["status"],
+                "completed": task_state["completed"],
+                "audio_file": task_state["audio_file"],
+                "error": task_state["error"],
+                "logs": [l["message"] for l in new_logs],
+                "last_log_id": current_last_id
+            }
+            
+            yield f"data: {json.dumps(payload)}\n\n"
+            if task_state["completed"] or task_state["status"] == "Failed":
                 break
             await asyncio.sleep(0.5)
 
@@ -555,7 +576,8 @@ async def generate_audiobook(
         voice_bytes = await voice_file.read()
         voice_file_data = (voice_file.filename, voice_bytes)
 
-    # Initialize task state in progress store
+    # Initialize task state in database and progress store
+    db.create_task(task_id)
     progress_store[task_id] = {
         "percentage": 0,
         "status": "Pending",
