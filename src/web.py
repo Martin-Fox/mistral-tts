@@ -20,6 +20,7 @@ from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
+from src.core.task_db import TaskDatabase
 
 # Load environment variables from .env
 load_dotenv()
@@ -76,30 +77,29 @@ app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
 # Global progress store
 progress_store = {}
 
+# Initialize database
+db = TaskDatabase(Path("storage/state.db"))
+
 # ContextVar to track the active task_id in each coroutine
 current_task_id = contextvars.ContextVar("current_task_id", default=None)
 
 class TaskLogHandler(logging.Handler):
-    """
-    Custom logging handler that appends formatted log records to the active task's log list
-    using context variables for concurrency safety.
-    """
-    def __init__(self, store: dict):
+    def __init__(self, database: TaskDatabase):
         super().__init__()
-        self.store = store
+        self.database = database
         self.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"))
 
     def emit(self, record):
         try:
             task_id = current_task_id.get()
-            if task_id and task_id in self.store:
+            if task_id:
                 log_entry = self.format(record)
-                self.store[task_id]["logs"].append(log_entry)
+                self.database.add_log(task_id, log_entry)
         except Exception:
             self.handleError(record)
 
 # Register global logging handler at module level
-global_log_handler = TaskLogHandler(progress_store)
+global_log_handler = TaskLogHandler(db)
 logging.getLogger("booksmith").addHandler(global_log_handler)
 logging.getLogger("src").addHandler(global_log_handler)
 
