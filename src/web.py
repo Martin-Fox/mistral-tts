@@ -589,3 +589,24 @@ async def generate_audiobook(
     )
 
     return {"task_id": task_id}
+
+
+async def task_purger_loop():
+    """
+    Loop infinitely to evict tasks older than 24 hours from the database.
+    """
+    while True:
+        try:
+            cutoff = time.time() - 86400
+            purged = db.delete_old_tasks(cutoff)
+            if purged > 0:
+                logger.info(f"Background purger evicted {purged} tasks older than 24 hours.")
+        except Exception as e:
+            logger.error(f"Error in task_purger_loop: {e}", exc_info=True)
+        await asyncio.sleep(1800)
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(task_purger_loop())
+

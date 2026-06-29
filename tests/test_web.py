@@ -347,3 +347,29 @@ def test_generate_openai_missing_key_error(mock_getenv):
     assert "OpenAI API key is required" in response.json()["detail"]
 
 
+@pytest.mark.anyio
+async def test_background_purger():
+    # 1. Create a task
+    task_id = "old-task-999"
+    db.create_task(task_id)
+    db.add_log(task_id, "Old task log")
+    
+    # 2. Modify created_at timestamp in SQLite to be older than 24 hours (e.g., 90000 seconds ago)
+    conn = db._get_connection()
+    try:
+        with conn:
+            conn.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (time.time() - 90000, task_id))
+    finally:
+        conn.close()
+        
+    # 3. Call delete_old_tasks with cutoff 24 hours ago
+    cutoff = time.time() - 86400
+    purged = db.delete_old_tasks(cutoff)
+    assert purged == 1
+    
+    # 4. Assert task is deleted and logs cascaded
+    assert db.get_task(task_id) is None
+    assert len(db.get_logs(task_id)) == 0
+
+
+
