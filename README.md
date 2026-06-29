@@ -1,4 +1,4 @@
-# Mistral-TTS-Booksmith
+# Mistral-TTS
 
 An automated, open-source text-to-speech pipeline designed to transform long-form text (articles, books, essays) into seamless audiobooks using the Mistral AI Voxtral TTS API with instant, zero-shot voice cloning.
 
