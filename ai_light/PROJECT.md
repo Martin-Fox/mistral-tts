@@ -15,6 +15,7 @@ Mistral-TTS-Booksmith bridges the gap between raw text files and polished, long-
 - **Audio Compiling & Mastering:** Merges independent audio buffers seamlessly using FFmpeg, injecting natural-sounding pause intervals between segments.
 - **Progress Persistence:** Maintains a local manifest and cache to resume interrupted generation tasks without repeating successful work.
 - **Integrated Translation:** Translates `.txt` and `.srt` source files from a source language to a target language using the **Mistral Large** model (`v1/chat/completions`) prior to TTS, preserving subtitle timecodes and including rate-limit-resilient backoffs.
+- **Alternative OpenAI TTS Engine:** Integration with the OpenAI TTS API, supporting the `tts-1` model and preset voices (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) for high-quality synthesis in additional languages (such as Polish).
 - **Docker Containerization:** Containerized setup bundling FFmpeg, Python environment, and runtime dependencies for zero-configuration deployments (available on Docker Hub as `marcinlis82/mistral-tts`).
 
 ---
@@ -96,6 +97,6 @@ mistral-tts/
 - [ ] **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a SQLite database.
 - [x] **EPUB Support:** Ingest and parse EPUB files to extract chapters while preserving document structure.
 - [x] **MOBI Support:** Ingest and parse MOBI files to extract chapters for synthesis.
-- [ ] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
+- [x] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
 
 
