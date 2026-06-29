@@ -74,8 +74,7 @@ app = FastAPI(
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
 
-# Global progress store
-progress_store = {}
+
 
 # Initialize database
 db = TaskDatabase(Path("storage/state.db"))
@@ -177,7 +176,7 @@ async def run_generation_pipeline(
 
     token = current_task_id.set(task_id)
     try:
-        progress_store[task_id]["status"] = "Preparing Files"
+        db.update_task(task_id, status="Preparing Files")
         logger.info(f"Starting audiobook generation task: {task_id}")
 
         # 1. Save uploaded text file or text content to a temporary file
@@ -226,7 +225,7 @@ async def run_generation_pipeline(
 
         # 3. Translation step
         if target_lang:
-            progress_store[task_id]["status"] = "Translating"
+            db.update_task(task_id, status="Translating")
             source = source_lang or "English"
             logger.info(f"Translating text from {source} to {target_lang}...")
             translation_client = MistralTTSClient(api_key=api_key)
@@ -236,7 +235,7 @@ async def run_generation_pipeline(
                 text = f.read()
 
         # 4. Split text into semantic chunks
-        progress_store[task_id]["status"] = "Splitting Text"
+        db.update_task(task_id, status="Splitting Text")
         splitter = TextSplitter()
         chunks = splitter.split(text)
         total_chunks = len(chunks)
@@ -249,7 +248,7 @@ async def run_generation_pipeline(
         client = get_tts_client(engine, tts_api_key)
 
         # 5. Clone or configure voice
-        progress_store[task_id]["status"] = "Configuring Voice"
+        db.update_task(task_id, status="Configuring Voice")
         if engine == "openai":
             voice_id = voice_preset or voice_manual_id or "alloy"
             logger.info(f"Setting OpenAI voice to: {voice_id}")
@@ -270,7 +269,7 @@ async def run_generation_pipeline(
                 client.set_voice_id("en_paul_neutral")
 
         # 6. Load manifest and generate audio chunks
-        progress_store[task_id]["status"] = "Generating Audio"
+        db.update_task(task_id, status="Generating Audio")
         manifest = load_manifest(manifest_path)
         manifest["chunks"] = chunks
 
@@ -289,7 +288,7 @@ async def run_generation_pipeline(
             ):
                 logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
                 percentage = int(((i + 1) / total_chunks) * 90)
-                progress_store[task_id]["percentage"] = percentage
+                db.update_task(task_id, percentage=percentage)
                 continue
 
             logger.info(f"Generating audio for chunk {i+1}/{total_chunks}...")
@@ -301,10 +300,10 @@ async def run_generation_pipeline(
             save_manifest(manifest_path, manifest)
 
             percentage = int(((i + 1) / total_chunks) * 90)
-            progress_store[task_id]["percentage"] = percentage
+            db.update_task(task_id, percentage=percentage)
 
         # 7. Compile final audiobook
-        progress_store[task_id]["status"] = "Compiling Audiobook"
+        db.update_task(task_id, status="Compiling Audiobook")
         logger.info("Compiling final audiobook file...")
         compiler = AudioCompiler()
         output_path = Path("storage/output") / output_filename
@@ -312,16 +311,21 @@ async def run_generation_pipeline(
         logger.info(f"Audiobook compiled successfully. Saved to {output_path}")
 
         # 8. Mark task as completed
-        progress_store[task_id]["percentage"] = 100
-        progress_store[task_id]["status"] = "Completed"
-        progress_store[task_id]["completed"] = True
-        progress_store[task_id]["audio_file"] = output_filename
+        db.update_task(
+            task_id,
+            percentage=100,
+            status="Completed",
+            completed=True,
+            audio_file=output_filename
+        )
 
     except Exception as e:
         logger.error(f"Error in generation pipeline: {e}", exc_info=True)
-        if task_id in progress_store:
-            progress_store[task_id]["status"] = "Failed"
-            progress_store[task_id]["error"] = str(e)
+        db.update_task(
+            task_id,
+            status="Failed",
+            error=str(e)
+        )
     finally:
         current_task_id.reset(token)
 
@@ -551,18 +555,6 @@ async def generate_audiobook(
     if not safe_filename or safe_filename.startswith(".") or Path(safe_filename).suffix.lower() not in (".mp3", ".m4b", ".wav"):
         raise HTTPException(status_code=400, detail="Invalid output filename. Must be a valid audio file name.")
 
-    # Prevent memory leaks: evict progress store tasks older than 24 hours, but only if they are in terminal states
-    now = time.time()
-    expired_tasks = [
-        tid for tid, state in progress_store.items()
-        if now - state.get("created_at", 0) > 86400 and state.get("status") in ("Completed", "Failed")
-    ]
-    for tid in expired_tasks:
-        try:
-            del progress_store[tid]
-        except KeyError:
-            pass
-
     task_id = str(uuid.uuid4())
 
     # Read uploaded file contents in the request handler to prevent closed file descriptors in background task
@@ -576,17 +568,8 @@ async def generate_audiobook(
         voice_bytes = await voice_file.read()
         voice_file_data = (voice_file.filename, voice_bytes)
 
-    # Initialize task state in database and progress store
+    # Initialize task state in database
     db.create_task(task_id)
-    progress_store[task_id] = {
-        "percentage": 0,
-        "status": "Pending",
-        "logs": [],
-        "completed": False,
-        "audio_file": None,
-        "error": None,
-        "created_at": now
-    }
 
     # Enqueue background execution task
     background_tasks.add_task(

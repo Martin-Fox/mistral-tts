@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from src.web import app, db, progress_store, get_audio, verify_session
+from src.web import app, db, get_audio, verify_session
 
 # Bypass authentication by default in tests
 app.dependency_overrides[verify_session] = lambda: "session-id"
@@ -99,11 +99,7 @@ def test_generate_success(mock_run_pipeline):
     assert "task_id" in json_data
     task_id = json_data["task_id"]
 
-    # Verify that the task_id is registered in progress_store with initial pending state
-    assert task_id in progress_store
-    assert progress_store[task_id]["status"] == "Pending"
-    assert progress_store[task_id]["percentage"] == 0
-    assert progress_store[task_id]["completed"] is False
+
 
     # Verify that the task_id is registered in db
     task_db_state = db.get_task(task_id)
@@ -128,9 +124,7 @@ def test_generate_success(mock_run_pipeline):
         engine="mistral"
     )
 
-    # Clean up progress_store and db
-    if task_id in progress_store:
-        del progress_store[task_id]
+    # Clean up db
     conn = db._get_connection()
     try:
         with conn:
