@@ -39,9 +39,10 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
    ```
 
 3. (Optional) Configure environment variables:
-   Create a `.env` file in the root directory to set your Mistral API Key and optional WebUI credentials:
+   Create a `.env` file in the root directory to set your API Keys and optional WebUI credentials:
    ```bash
    MISTRAL_API_KEY=your_mistral_api_key_here
+   OPENAI_API_KEY=your_openai_api_key_here
 
    # WebUI login credentials (defaults to admin/admin if not set)
    APP_USERNAME=admin
@@ -85,6 +86,24 @@ python3 src/cli.py --text <path_to_text_file> \
 
 *Note: If `MISTRAL_API_KEY` is set in your `.env` file, the `--api-key` flag is optional.*
 
+### OpenAI TTS Integration
+
+To use the OpenAI TTS synthesis engine (e.g., for languages like Polish where Mistral Voxtral is not natively supported):
+
+1. **API Configuration:** Configure `OPENAI_API_KEY` in your `.env` file, or supply it as a parameter in the interfaces.
+2. **Preset Voices:** OpenAI TTS only supports its 6 preset voices: `alloy`, `echo`, `fable`, `onyx`, `nova`, and `shimmer`. Dynamic voice cloning is not supported.
+3. **WebUI Usage:** Select **OpenAI TTS** as the *TTS Engine*. The WebUI dynamically hides the voice cloning section and switches preset options to the OpenAI voices.
+4. **TUI Usage:** Set the *TTS Engine* dropdown to **OpenAI**. The dropdown for *Default Voice* will populate with OpenAI voices, and inputs for cloning and manual voice IDs will be disabled.
+5. **CLI Usage:** Include the `--engine openai` parameter and specify one of the 6 preset voices in the `--voice` argument:
+   ```bash
+   python3 src/cli.py --text book.txt \
+                      --engine openai \
+                      --voice alloy \
+                      --output audiobook.mp3 \
+                      --openai-key your_openai_key
+   ```
+   *Note: Passing a file path to `--voice` when running with `--engine openai` will trigger a validation error.*
+
 ### Parameters
 
 | Flag | Description |
@@ -93,9 +112,11 @@ python3 src/cli.py --text <path_to_text_file> \
 | `--text` | Path to the source file (`.txt`, `.srt`, `.epub`, or `.mobi`). |
 | `--source-lang` | (Optional) Source language of the input file (e.g., `Polish`). Defaults to `English`. |
 | `--target-lang` | (Optional) Target language to translate the text into before generating speech (e.g., `English`). |
-| `--voice` | Path to a short `.mp3` or `.wav` sample for cloning. |
+| `--voice` | Path to a short `.mp3` or `.wav` sample for cloning (for Mistral) or a preset voice ID (e.g. `alloy` for OpenAI). |
 | `--output` | The destination path for the final `.mp3` file. |
 | `--api-key` | Your Mistral AI API key (overrides `.env`). |
+| `--engine` | TTS engine to use: `mistral` (default) or `openai`. |
+| `--openai-key` | Your OpenAI API key (overrides `OPENAI_API_KEY` in `.env`). |
 
 ### Running Tests
 
@@ -143,12 +164,13 @@ docker run -d --rm \
   -p 8000:8000 \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_key_here \
+  -e OPENAI_API_KEY=your_openai_key_here \
   -e APP_USERNAME=myuser \
   -e APP_PASSWORD=mypassword \
   --name mistral-tts \
   marcinlis82/mistral-tts
 ```
-*Note: If `APP_USERNAME` and `APP_PASSWORD` are not specified, they will default to `admin` and `admin` respectively.*
+*Note: If `APP_USERNAME` and `APP_PASSWORD` are not specified, they will default to `admin` and `admin` respectively. The `MISTRAL_API_KEY` and `OPENAI_API_KEY` environment variables configure the backend clients for the respective engines.*
 
 
 ### 3. Run the interactive TUI
@@ -188,7 +210,7 @@ docker run --rm \
 - [ ] **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a SQLite database.
 - [x] **EPUB Support:** Ingest and parse EPUB files to extract chapters while preserving document structure.
 - [x] **MOBI Support:** Ingest and parse MOBI files to extract chapters for synthesis.
-- [ ] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
+- [x] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
 
 
 
