@@ -419,7 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             appendConsoleLine(`Task initialized successfully (ID: ${taskId}). Subscribing to progress updates...`, 'system-line');
-            startProgressStream(taskId, originalBtnText);
+            startProgressStream(taskId, originalBtnText, 0);
 
         } catch (error) {
             appendConsoleLine(`Initialization Failed: ${error.message}`, 'error-line');
@@ -435,12 +435,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // === 6. SSE Stream Tracking ===
-    function startProgressStream(taskId, originalBtnText) {
+    function startProgressStream(taskId, originalBtnText, initialLastLogId = 0) {
         if (eventSource) {
             eventSource.close();
         }
 
-        eventSource = new EventSource(`/api/progress?task_id=${taskId}`);
+        let lastLogId = initialLastLogId;
+        eventSource = new EventSource(`/api/progress?task_id=${taskId}&last_log_id=${lastLogId}`);
 
         eventSource.onmessage = (event) => {
             if (isFinished) return;
@@ -459,25 +460,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     progressPercentage.textContent = `${pct}%`;
                 }
 
+                if (state.last_log_id !== undefined) {
+                    lastLogId = state.last_log_id;
+                }
+
                 // Render new logs
                 const logs = state.logs || [];
-                if (logs.length > renderedLogCount) {
-                    for (let i = renderedLogCount; i < logs.length; i++) {
-                        const lineText = logs[i];
-                        
-                        // Determine line class based on keywords
-                        let lineClass = '';
-                        if (/error|fail/i.test(lineText)) {
-                            lineClass = 'error-line';
-                        } else if (/success|compiled/i.test(lineText)) {
-                            lineClass = 'success-line';
-                        } else if (/translating|splitting|voice/i.test(lineText)) {
-                            lineClass = 'system-line';
-                        }
-                        
-                        appendConsoleLine(lineText, lineClass);
+                for (const lineText of logs) {
+                    let lineClass = '';
+                    if (/error|fail/i.test(lineText)) {
+                        lineClass = 'error-line';
+                    } else if (/success|compiled/i.test(lineText)) {
+                        lineClass = 'success-line';
+                    } else if (/translating|splitting|voice/i.test(lineText)) {
+                        lineClass = 'system-line';
                     }
-                    renderedLogCount = logs.length;
+                    appendConsoleLine(lineText, lineClass);
                 }
 
                 // Check for completion
@@ -498,9 +496,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isFinished) return;
             console.error('EventSource connection error:', err);
             
-            // Log connection loss and clean up
-            appendConsoleLine('Lost connection to progress monitoring pipeline.', 'error-line');
-            handleTaskFailure('Progress stream connection lost.', originalBtnText);
+            eventSource.close();
+            appendConsoleLine('Connection lost. Reconnecting to progress pipeline...', 'system-line');
+            setTimeout(() => {
+                startProgressStream(taskId, originalBtnText, lastLogId);
+            }, 3000);
         };
     }
 

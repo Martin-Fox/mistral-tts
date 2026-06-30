@@ -20,6 +20,7 @@ from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
+from src.core.task_db import TaskDatabase
 
 # Load environment variables from .env
 load_dotenv()
@@ -73,33 +74,31 @@ app = FastAPI(
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
 
-# Global progress store
-progress_store = {}
+
+
+# Initialize database
+db = TaskDatabase(Path("storage/state.db"))
 
 # ContextVar to track the active task_id in each coroutine
 current_task_id = contextvars.ContextVar("current_task_id", default=None)
 
 class TaskLogHandler(logging.Handler):
-    """
-    Custom logging handler that appends formatted log records to the active task's log list
-    using context variables for concurrency safety.
-    """
-    def __init__(self, store: dict):
+    def __init__(self, database: TaskDatabase):
         super().__init__()
-        self.store = store
+        self.database = database
         self.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"))
 
     def emit(self, record):
         try:
             task_id = current_task_id.get()
-            if task_id and task_id in self.store:
+            if task_id:
                 log_entry = self.format(record)
-                self.store[task_id]["logs"].append(log_entry)
+                self.database.add_log(task_id, log_entry)
         except Exception:
             self.handleError(record)
 
 # Register global logging handler at module level
-global_log_handler = TaskLogHandler(progress_store)
+global_log_handler = TaskLogHandler(db)
 logging.getLogger("booksmith").addHandler(global_log_handler)
 logging.getLogger("src").addHandler(global_log_handler)
 
@@ -177,7 +176,7 @@ async def run_generation_pipeline(
 
     token = current_task_id.set(task_id)
     try:
-        progress_store[task_id]["status"] = "Preparing Files"
+        db.update_task(task_id, status="Preparing Files")
         logger.info(f"Starting audiobook generation task: {task_id}")
 
         # 1. Save uploaded text file or text content to a temporary file
@@ -226,7 +225,7 @@ async def run_generation_pipeline(
 
         # 3. Translation step
         if target_lang:
-            progress_store[task_id]["status"] = "Translating"
+            db.update_task(task_id, status="Translating")
             source = source_lang or "English"
             logger.info(f"Translating text from {source} to {target_lang}...")
             translation_client = MistralTTSClient(api_key=api_key)
@@ -236,7 +235,7 @@ async def run_generation_pipeline(
                 text = f.read()
 
         # 4. Split text into semantic chunks
-        progress_store[task_id]["status"] = "Splitting Text"
+        db.update_task(task_id, status="Splitting Text")
         splitter = TextSplitter()
         chunks = splitter.split(text)
         total_chunks = len(chunks)
@@ -249,7 +248,7 @@ async def run_generation_pipeline(
         client = get_tts_client(engine, tts_api_key)
 
         # 5. Clone or configure voice
-        progress_store[task_id]["status"] = "Configuring Voice"
+        db.update_task(task_id, status="Configuring Voice")
         if engine == "openai":
             voice_id = voice_preset or voice_manual_id or "alloy"
             logger.info(f"Setting OpenAI voice to: {voice_id}")
@@ -270,7 +269,7 @@ async def run_generation_pipeline(
                 client.set_voice_id("en_paul_neutral")
 
         # 6. Load manifest and generate audio chunks
-        progress_store[task_id]["status"] = "Generating Audio"
+        db.update_task(task_id, status="Generating Audio")
         manifest = load_manifest(manifest_path)
         manifest["chunks"] = chunks
 
@@ -289,7 +288,7 @@ async def run_generation_pipeline(
             ):
                 logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
                 percentage = int(((i + 1) / total_chunks) * 90)
-                progress_store[task_id]["percentage"] = percentage
+                db.update_task(task_id, percentage=percentage)
                 continue
 
             logger.info(f"Generating audio for chunk {i+1}/{total_chunks}...")
@@ -301,10 +300,10 @@ async def run_generation_pipeline(
             save_manifest(manifest_path, manifest)
 
             percentage = int(((i + 1) / total_chunks) * 90)
-            progress_store[task_id]["percentage"] = percentage
+            db.update_task(task_id, percentage=percentage)
 
         # 7. Compile final audiobook
-        progress_store[task_id]["status"] = "Compiling Audiobook"
+        db.update_task(task_id, status="Compiling Audiobook")
         logger.info("Compiling final audiobook file...")
         compiler = AudioCompiler()
         output_path = Path("storage/output") / output_filename
@@ -312,16 +311,21 @@ async def run_generation_pipeline(
         logger.info(f"Audiobook compiled successfully. Saved to {output_path}")
 
         # 8. Mark task as completed
-        progress_store[task_id]["percentage"] = 100
-        progress_store[task_id]["status"] = "Completed"
-        progress_store[task_id]["completed"] = True
-        progress_store[task_id]["audio_file"] = output_filename
+        db.update_task(
+            task_id,
+            percentage=100,
+            status="Completed",
+            completed=True,
+            audio_file=output_filename
+        )
 
     except Exception as e:
         logger.error(f"Error in generation pipeline: {e}", exc_info=True)
-        if task_id in progress_store:
-            progress_store[task_id]["status"] = "Failed"
-            progress_store[task_id]["error"] = str(e)
+        db.update_task(
+            task_id,
+            status="Failed",
+            error=str(e)
+        )
     finally:
         current_task_id.reset(token)
 
@@ -450,20 +454,41 @@ def get_audio(filename: str, session: str = Depends(verify_session)):
     return FileResponse(file_path, media_type="audio/mpeg")
 
 @app.get("/api/progress")
-async def get_progress(task_id: str = Query(...), session: str = Depends(verify_session)):
+async def get_progress(
+    task_id: str = Query(...),
+    last_log_id: int = Query(0),
+    session: str = Depends(verify_session)
+):
     """
     Returns an SSE stream yielding progress updates as JSON-encoded string events.
     """
-    if task_id not in progress_store:
+    task_state = db.get_task(task_id)
+    if not task_state:
         raise HTTPException(status_code=404, detail="Task not found")
 
     async def event_generator():
+        current_last_id = last_log_id
         while True:
-            task_state = progress_store.get(task_id)
+            task_state = db.get_task(task_id)
             if not task_state:
                 break
-            yield f"data: {json.dumps(task_state)}\n\n"
-            if task_state.get("completed") or task_state.get("error") or task_state.get("status") == "Failed":
+            
+            new_logs = db.get_logs(task_id, after_id=current_last_id)
+            if new_logs:
+                current_last_id = new_logs[-1]["id"]
+            
+            payload = {
+                "percentage": task_state["percentage"],
+                "status": task_state["status"],
+                "completed": task_state["completed"],
+                "audio_file": task_state["audio_file"],
+                "error": task_state["error"],
+                "logs": [l["message"] for l in new_logs],
+                "last_log_id": current_last_id
+            }
+            
+            yield f"data: {json.dumps(payload)}\n\n"
+            if task_state["completed"] or task_state["status"] == "Failed":
                 break
             await asyncio.sleep(0.5)
 
@@ -530,18 +555,6 @@ async def generate_audiobook(
     if not safe_filename or safe_filename.startswith(".") or Path(safe_filename).suffix.lower() not in (".mp3", ".m4b", ".wav"):
         raise HTTPException(status_code=400, detail="Invalid output filename. Must be a valid audio file name.")
 
-    # Prevent memory leaks: evict progress store tasks older than 24 hours, but only if they are in terminal states
-    now = time.time()
-    expired_tasks = [
-        tid for tid, state in progress_store.items()
-        if now - state.get("created_at", 0) > 86400 and state.get("status") in ("Completed", "Failed")
-    ]
-    for tid in expired_tasks:
-        try:
-            del progress_store[tid]
-        except KeyError:
-            pass
-
     task_id = str(uuid.uuid4())
 
     # Read uploaded file contents in the request handler to prevent closed file descriptors in background task
@@ -555,16 +568,8 @@ async def generate_audiobook(
         voice_bytes = await voice_file.read()
         voice_file_data = (voice_file.filename, voice_bytes)
 
-    # Initialize task state in progress store
-    progress_store[task_id] = {
-        "percentage": 0,
-        "status": "Pending",
-        "logs": [],
-        "completed": False,
-        "audio_file": None,
-        "error": None,
-        "created_at": now
-    }
+    # Initialize task state in database
+    db.create_task(task_id)
 
     # Enqueue background execution task
     background_tasks.add_task(
@@ -584,3 +589,24 @@ async def generate_audiobook(
     )
 
     return {"task_id": task_id}
+
+
+async def task_purger_loop():
+    """
+    Loop infinitely to evict tasks older than 24 hours from the database.
+    """
+    while True:
+        try:
+            cutoff = time.time() - 86400
+            purged = db.delete_old_tasks(cutoff)
+            if purged > 0:
+                logger.info(f"Background purger evicted {purged} tasks older than 24 hours.")
+        except Exception as e:
+            logger.error(f"Error in task_purger_loop: {e}", exc_info=True)
+        await asyncio.sleep(1800)
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(task_purger_loop())
+
