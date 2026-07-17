@@ -30,9 +30,12 @@ class AudioCompiler:
         # Create a temporary file for the concat demuxer
         concat_file = output_path.with_suffix(".txt")
         
+        # Probe the first chunk to match its audio properties for silence generation
+        sample_rate, channels = self._probe_audio_properties(chunk_paths[0])
+        
         # We need a silence file to inject pauses
         silence_file = output_path.parent / "silence.mp3"
-        self._generate_silence(silence_file)
+        self._generate_silence(silence_file, sample_rate, channels)
 
         try:
             with open(concat_file, "w") as f:
@@ -46,10 +49,10 @@ class AudioCompiler:
             # Run FFmpeg concat demuxer
             # -f concat: Use concat demuxer
             # -safe 0: Allow absolute paths
-            # -c copy: Copy streams without re-encoding (very fast)
+            # -af loudnorm: Apply loudness normalization to solve volume level fluctuations
             cmd = [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                "-i", str(concat_file), "-c", "copy", str(output_path)
+                "-i", str(concat_file), "-af", "loudnorm", str(output_path)
             ]
             
             subprocess.run(cmd, check=True, capture_output=True)
@@ -61,13 +64,38 @@ class AudioCompiler:
             if silence_file.exists():
                 silence_file.unlink()
 
-    def _generate_silence(self, output_path: Path):
+    def _probe_audio_properties(self, file_path: Path) -> tuple[int, int]:
         """
-        Generates a silent MP3 file of a specific duration.
+        Probe the audio properties (sample_rate, channels) of a file using ffprobe.
+        Defaults to (22050, 1) if probing fails.
         """
+        import json
+        try:
+            cmd = [
+                "ffprobe", "-v", "error", 
+                "-show_entries", "stream=sample_rate,channels", 
+                "-of", "json", str(file_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            if "streams" in data and len(data["streams"]) > 0:
+                stream = data["streams"][0]
+                sample_rate = int(stream.get("sample_rate", 22050))
+                channels = int(stream.get("channels", 1))
+                return sample_rate, channels
+        except Exception:
+            pass
+        return 22050, 1
+
+    def _generate_silence(self, output_path: Path, sample_rate: int = 22050, channels: int = 1):
+        """
+        Generates a silent MP3 file of a specific duration matching the target audio properties.
+        """
+        channel_layout = "mono" if channels == 1 else "stereo"
         # Using an-null source and trim to generate silence
         cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "ffmpeg", "-y", "-f", "lavfi", 
+            "-i", f"anullsrc=r={sample_rate}:cl={channel_layout}",
             "-t", str(self.pause_duration_s), "-q:a", "9", str(output_path)
         ]
         subprocess.run(cmd, check=True, capture_output=True)

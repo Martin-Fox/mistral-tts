@@ -69,11 +69,36 @@ class MistralTTSClient(BaseTTSClient):
     async def clone_voice(self, audio_path: Path) -> str:
         """
         Sets a reference voice sample for zero-shot cloning.
+        Denoises the voice sample in-place using FFmpeg's afftdn filter to improve zero-shot cloning quality.
         """
         if not audio_path.exists():
             raise FileNotFoundError(f"Voice sample not found at {audio_path}")
         
         logger.info(f"Setting reference voice from {audio_path}")
+        
+        # Denoise the voice sample using FFmpeg's afftdn filter
+        temp_denoised = audio_path.with_suffix(audio_path.suffix + ".denoised")
+        try:
+            cmd = ["ffmpeg", "-y", "-i", str(audio_path), "-af", "afftdn", str(temp_denoised)]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.communicate()
+            if process.returncode == 0 and temp_denoised.exists() and temp_denoised.stat().st_size > 0:
+                # Atomically replace the original with the denoised version
+                temp_denoised.replace(audio_path)
+                logger.info("Successfully denoised voice sample in-place using afftdn.")
+        except Exception as e:
+            logger.warning(f"Failed to denoise voice sample, using original: {e}")
+        finally:
+            if temp_denoised.exists():
+                try:
+                    temp_denoised.unlink()
+                except Exception:
+                    pass
+
         self.voice_sample_path = audio_path
         self.voice_id = None
         return str(audio_path)
