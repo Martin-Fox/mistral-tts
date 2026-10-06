@@ -567,7 +567,7 @@ async def test_run_generation_pipeline_translation_model(tmp_path):
         mock_client_cls.return_value = mock_client
 
         mock_tts = MagicMock()
-        mock_tts.generate_audio_chunk = AsyncMock()
+        mock_tts.generate_audio = AsyncMock()
         mock_get_tts.return_value = mock_tts
 
         mock_splitter.return_value.split.return_value = ["Hola mundo"]
@@ -595,6 +595,73 @@ async def test_run_generation_pipeline_translation_model(tmp_path):
                     conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             finally:
                 conn.close()
+
+
+@pytest.mark.anyio
+async def test_run_generation_pipeline_with_text_file_data():
+    """Verify run_generation_pipeline succeeds without crashing when text_file_data is provided."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    task_id = "test-pipeline-text-file-upload"
+    db.create_task(task_id)
+
+    chunk_text = "Test content"
+
+    async def fake_generate_audio(chunk, chunk_path):
+        chunk_path.write_bytes(b"0" * 150)
+
+    with patch("src.web.get_tts_client") as mock_get_tts, \
+         patch("src.web.AudioCompiler") as mock_compiler_cls, \
+         patch("src.core.epub_parser.read_input_text", return_value=chunk_text), \
+         patch("src.web.save_manifest"), \
+         patch("src.web.load_manifest", return_value={"chunks": [], "completed": []}), \
+         patch("src.web.TextSplitter") as mock_splitter:
+
+        mock_tts = MagicMock()
+        mock_tts.generate_audio = AsyncMock(side_effect=fake_generate_audio)
+        mock_get_tts.return_value = mock_tts
+
+        mock_compiler = MagicMock()
+        mock_compiler.compile.return_value = {
+            "expected_duration": 1.0,
+            "output_duration": 1.0,
+            "total_chunks": 1,
+            "output_path": Path("storage/output/audiobook.mp3")
+        }
+        mock_compiler_cls.return_value = mock_compiler
+
+        mock_splitter.return_value.split.return_value = [chunk_text]
+
+        try:
+            await run_generation_pipeline(
+                task_id=task_id,
+                api_key="mistral_api_key",
+                text_content=None,
+                text_file_data=("chapter1.txt", b"Test content"),
+                voice_file_data=None,
+                voice_preset="en_paul_neutral",
+                voice_manual_id=None,
+                source_lang=None,
+                target_lang=None,
+                output_filename="audiobook.mp3",
+                engine="mistral"
+            )
+
+            task = db.get_task(task_id)
+            assert task["completed"] is True
+            assert task["status"] == "Completed"
+            assert task["error"] is None
+            assert task["percentage"] == 100
+            assert mock_compiler.compile.called
+        finally:
+            conn = db._get_connection()
+            try:
+                with conn:
+                    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            finally:
+                conn.close()
+
 
 
 

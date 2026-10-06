@@ -231,5 +231,230 @@ def test_client_translation_model_fallback(monkeypatch):
     assert client_default.translation_model == "ministral-8b-latest"
 
 
+@pytest.mark.anyio
+async def test_translate_text_length_truncation_warning(caplog):
+    import logging
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Truncated text..."
+    mock_choice.finish_reason = "length"
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    with caplog.at_level(logging.WARNING):
+        res = await client.translate_text("Long text", "English", "Spanish")
+
+    assert res == "Truncated text..."
+    assert any("truncated" in r.message.lower() and "length" in r.message.lower() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_translate_file_splits_long_paragraphs(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    # Return translated version of each chunk
+    async def fake_complete(*args, **kwargs):
+        messages = kwargs.get("messages", [])
+        content = messages[0]["content"]
+        resp = MagicMock()
+        choice = MagicMock()
+        choice.finish_reason = "stop"
+        choice.message.content = f"TRANS[{len(content)}]"
+        resp.choices = [choice]
+        return resp
+
+    client.client.chat.complete_async = AsyncMock(side_effect=fake_complete)
+
+    # Create a long paragraph > 3000 chars with sentences
+    long_sentences = ["This is a distinct test sentence for translation. " for _ in range(80)]
+    long_para = "".join(long_sentences)
+    assert len(long_para) > 3000
+
+    input_file = tmp_path / "long_input.txt"
+    input_file.write_text(long_para, encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path:
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        out_file = await client.translate_file(input_file, "English", "Spanish")
+
+        assert out_file.exists()
+        content = out_file.read_text(encoding="utf-8")
+        assert "TRANS[" in content
+        # Ensure complete_async was called more than once due to paragraph splitting
+        assert client.client.chat.complete_async.call_count >= 2
+
+
+@pytest.mark.anyio
+async def test_translate_file_stem_preservation_and_naming(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "stop"
+    mock_choice.message.content = "Texto traducido."
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    input_file = tmp_path / "wtfs_s02e02.txt"
+    input_file.write_text("Original content.", encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path:
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        # 1. Default naming with single word target lang
+        out_file1 = await client.translate_file(input_file, "English", "Spanish")
+        assert out_file1.name == "wtfs_s02e02_translated_spanish.txt"
+        assert out_file1.exists()
+
+        # 2. Target lang with spaces
+        out_file2 = await client.translate_file(input_file, "English", "Latin American Spanish")
+        assert out_file2.name == "wtfs_s02e02_translated_latin_american_spanish.txt"
+        assert out_file2.exists()
+
+        # 3. Explicit custom output_filename override
+        out_file3 = await client.translate_file(input_file, "English", "Spanish", output_filename="custom_episode.txt")
+        assert out_file3.name == "custom_episode.txt"
+        assert out_file3.exists()
+
+
+@pytest.mark.anyio
+async def test_translate_file_srt_non_standard_numbering_and_trailing_blocks(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    # Batch response mock
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "stop"
+    mock_choice.message.content = json.dumps({
+        "translations": [
+            "Línea de inicio.",
+            "Línea final no estándar."
+        ]
+    })
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    srt_content = """10
+00:00:01,000 --> 00:00:03,000
+Opening line.
+
+special_block_99
+00:00:04,000 --> 00:00:07,000
+Trailing non-standard line.
+
+
+"""
+    input_file = tmp_path / "wtfs_s02e02.srt"
+    input_file.write_text(srt_content, encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path:
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        out_file = await client.translate_file(input_file, "English", "Spanish")
+        assert out_file.name == "wtfs_s02e02_translated_spanish.srt"
+        content = out_file.read_text(encoding="utf-8")
+        assert "10" in content
+        assert "Línea de inicio." in content
+        assert "special_block_99" in content
+        assert "Línea final no estándar." in content
+
+
+@pytest.mark.anyio
+async def test_translate_file_srt_length_truncation_warning(tmp_path, caplog):
+    import logging
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "length"
+    mock_choice.message.content = json.dumps({
+        "translations": ["Línea traducida."]
+    })
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    srt_content = """1
+00:00:01,000 --> 00:00:03,000
+Some text.
+"""
+    input_file = tmp_path / "test_warning.srt"
+    input_file.write_text(srt_content, encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path:
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        with caplog.at_level(logging.WARNING):
+            await client.translate_file(input_file, "English", "Spanish")
+
+        assert any("truncated" in r.message.lower() and "length" in r.message.lower() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_translate_file_splits_long_paragraphs_with_trailing_unpunctuated_text(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    captured_chunks = []
+    async def fake_complete(*args, **kwargs):
+        messages = kwargs.get("messages", [])
+        content = messages[0]["content"]
+        captured_chunks.append(content)
+        resp = MagicMock()
+        choice = MagicMock()
+        choice.finish_reason = "stop"
+        choice.message.content = "Traducido"
+        resp.choices = [choice]
+        return resp
+
+    client.client.chat.complete_async = AsyncMock(side_effect=fake_complete)
+
+    # Paragraph > 2500 chars ending with trailing unpunctuated text
+    sentences = ["A sentence that takes up some character space here. " for _ in range(60)]
+    trailing_unpunctuated = "Trailing sentence without any ending period"
+    full_text = "".join(sentences) + trailing_unpunctuated
+    assert len(full_text) > 2500
+
+    input_file = tmp_path / "trailing_long.txt"
+    input_file.write_text(full_text, encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path:
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        out_file = await client.translate_file(input_file, "English", "Spanish")
+        assert out_file.exists()
+        # Verify that trailing unpunctuated text was passed into one of the translation chunks
+        assert any(trailing_unpunctuated in chunk for chunk in captured_chunks)
+
+
+
+
 
 

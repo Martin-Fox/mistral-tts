@@ -81,7 +81,8 @@ class BooksmithCLI:
             text = read_input_text(text_path)
             # 2. Split text
             chunks = self.splitter.split(text)
-            logger.info(f"Text split into {len(chunks)} semantic chunks.")
+            total_chars = sum(len(c) for c in chunks)
+            logger.info(f"Text split into {len(chunks)} semantic chunks (total characters: {total_chars}).")
 
         # 3. Configure voice
         voice_str = str(voice_path).strip() if voice_path else ""
@@ -122,7 +123,11 @@ class BooksmithCLI:
                 chunk_path = self.cache_dir / chunk_filename
                 chunk_files.append(chunk_path)
 
-                if chunk_filename in manifest["completed"]:
+                if (
+                    chunk_filename in manifest["completed"]
+                    and chunk_path.exists()
+                    and chunk_path.stat().st_size > 100
+                ):
                     progress.advance(task)
                     continue
 
@@ -131,9 +136,21 @@ class BooksmithCLI:
                 self.save_manifest(manifest)
                 progress.advance(task)
 
-        # 5. Compile final audiobook
+        # 5. Verify and compile final audiobook
+        if len(chunk_files) != len(chunks):
+            raise RuntimeError(f"Chunk count mismatch: expected {len(chunks)}, got {len(chunk_files)} files.")
+        for idx, cf in enumerate(chunk_files):
+            if not cf.exists() or cf.stat().st_size <= 100:
+                raise RuntimeError(
+                    f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{len(chunks)})"
+                )
+
         with console.status("[bold yellow]Compiling final audiobook..."):
-            self.compiler.compile(chunk_files, output_path)
+            compilation_meta = self.compiler.compile(chunk_files, output_path)
+            logger.info(
+                f"Audiobook compilation verified: duration {compilation_meta.get('output_duration', 0):.2f}s "
+                f"(expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {len(chunk_files)} chunks)."
+            )
             
         console.print(Panel(f"[bold green]Success![/bold green] Audiobook saved to: [underline]{output_path}[/underline]"))
 

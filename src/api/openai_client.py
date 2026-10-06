@@ -51,6 +51,10 @@ class OpenAITTSClient(BaseTTSClient):
                     
                     if response.status_code == 200:
                         output_path.write_bytes(response.content)
+                        if not output_path.exists() or output_path.stat().st_size <= 100:
+                            raise RuntimeError(
+                                f"Generated OpenAI audio file is missing or too small (<= 100 bytes): {output_path}"
+                            )
                         logger.info(f"Successfully generated OpenAI TTS audio for: {output_path}")
                         return
                     else:

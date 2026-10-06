@@ -23,7 +23,7 @@ docker run -d \
   -e APP_USERNAME=admin \
   -e APP_PASSWORD=admin_secure_password \
   --name mistral-tts \
-  marcinlis82/mistral-tts:1.0
+  marcinlis82/mistral-tts:1.0.1
 ```
 
 Once running, access the WebUI at **`http://localhost:8000`**.
@@ -37,7 +37,7 @@ docker run -it --rm \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_mistral_api_key_here \
   -e OPENAI_API_KEY=your_openai_api_key_here \
-  marcinlis82/mistral-tts:1.0 \
+  marcinlis82/mistral-tts:1.0.1 \
   python src/cli.py --tui
 ```
 
@@ -48,7 +48,7 @@ For automated script integrations, execute the CLI directly:
 docker run --rm \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_mistral_api_key_here \
-  marcinlis82/mistral-tts:1.0 \
+  marcinlis82/mistral-tts:1.0.1 \
   python src/cli.py \
   --text /app/storage/book.txt \
   --voice /app/storage/sample.mp3 \

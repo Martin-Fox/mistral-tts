@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -190,22 +191,27 @@ async def run_generation_pipeline(
     text_path = None
     voice_path = None
     translated_path = None
+    task_temp_dir = None
 
     token = current_task_id.set(task_id)
     try:
         db.update_task(task_id, status="Preparing Files")
         logger.info(f"Starting audiobook generation task: {task_id}")
 
-        # 1. Save uploaded text file or text content to a temporary file
+        # 1. Save uploaded text file or text content to a temporary task directory
+        task_temp_dir = Path("storage/cache") / f"task_{task_id}"
+        task_temp_dir.mkdir(parents=True, exist_ok=True)
         if text_file_data:
             filename, content = text_file_data
             suffix = Path(filename).suffix or ".txt"
-            text_path = Path("storage/cache") / f"input_{task_id}{suffix}"
+            base_stem = Path(filename).stem
+            safe_stem = re.sub(r'[^a-zA-Z0-9_-]', '_', base_stem) or "input"
+            text_path = task_temp_dir / f"{safe_stem}{suffix}"
             with open(text_path, "wb") as f:
                 f.write(content)
             logger.info(f"Saved uploaded text file to {text_path}")
         elif text_content is not None:
-            text_path = Path("storage/cache") / f"input_{task_id}.txt"
+            text_path = task_temp_dir / "input.txt"
             with open(text_path, "w", encoding="utf-8") as f:
                 f.write(text_content)
             logger.info(f"Saved text content to temporary file {text_path}")
@@ -218,7 +224,7 @@ async def run_generation_pipeline(
             filename, content = voice_file_data
             voice_bytes = content
             suffix = Path(filename).suffix or ".mp3"
-            voice_path = Path("storage/cache") / f"voice_{task_id}{suffix}"
+            voice_path = task_temp_dir / f"voice_{task_id}{suffix}"
             with open(voice_path, "wb") as f:
                 f.write(content)
             logger.info(f"Saved uploaded voice file to {voice_path}")
@@ -249,15 +255,15 @@ async def run_generation_pipeline(
             translation_client = MistralTTSClient(api_key=api_key, translation_model=translation_model)
             translated_path = await translation_client.translate_file(text_path, source, target_lang)
             logger.info(f"Translation completed. Translated file: {translated_path}")
-            with open(translated_path, "r", encoding="utf-8") as f:
-                text = f.read()
+            text = read_input_text(translated_path)
 
         # 4. Split text into semantic chunks
         db.update_task(task_id, status="Splitting Text")
         splitter = TextSplitter()
         chunks = splitter.split(text)
         total_chunks = len(chunks)
-        logger.info(f"Text split into {total_chunks} semantic chunks.")
+        total_chars = sum(len(c) for c in chunks)
+        logger.info(f"Text split into {total_chunks} semantic chunks (total characters: {total_chars}).")
         if total_chunks == 0:
             raise ValueError("The split text has 0 chunks.")
 
@@ -302,7 +308,7 @@ async def run_generation_pipeline(
                 and len(manifest.get("chunks", [])) > i
                 and manifest["chunks"][i] == chunk
                 and chunk_path.exists()
-                and chunk_path.stat().st_size > 0
+                and chunk_path.stat().st_size > 100
             ):
                 logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
                 percentage = int(((i + 1) / total_chunks) * 90)
@@ -320,13 +326,26 @@ async def run_generation_pipeline(
             percentage = int(((i + 1) / total_chunks) * 90)
             db.update_task(task_id, percentage=percentage)
 
+        # Verify all chunks have corresponding valid chunk files before compiling
+        if len(chunk_files) != total_chunks:
+            raise RuntimeError(f"Chunk count mismatch: expected {total_chunks}, got {len(chunk_files)} files.")
+        for idx, cf in enumerate(chunk_files):
+            if not cf.exists() or cf.stat().st_size <= 100:
+                raise RuntimeError(
+                    f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{total_chunks})"
+                )
+
         # 7. Compile final audiobook
         db.update_task(task_id, status="Compiling Audiobook")
-        logger.info("Compiling final audiobook file...")
+        logger.info(f"Compiling final audiobook file from {total_chunks} chunks...")
         compiler = AudioCompiler()
         output_path = Path("storage/output") / output_filename
-        await asyncio.to_thread(compiler.compile, chunk_files, output_path)
-        logger.info(f"Audiobook compiled successfully. Saved to {output_path}")
+        compilation_meta = await asyncio.to_thread(compiler.compile, chunk_files, output_path)
+        logger.info(
+            f"Audiobook compiled successfully. Saved to {output_path} "
+            f"(verified duration: {compilation_meta.get('output_duration', 0):.2f}s, "
+            f"expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {total_chunks} chunks)"
+        )
 
         # 8. Mark task as completed
         db.update_task(
@@ -347,7 +366,7 @@ async def run_generation_pipeline(
     finally:
         current_task_id.reset(token)
 
-        # Clean up temporary uploaded text, voice, and translated files
+        # Clean up temporary uploaded text, voice, and task cache directory
         if text_path and text_path.exists():
             try:
                 text_path.unlink()
@@ -358,11 +377,11 @@ async def run_generation_pipeline(
                 voice_path.unlink()
             except Exception as e:
                 logger.warning(f"Failed to delete temporary voice file {voice_path}: {e}")
-        if translated_path and translated_path.exists():
+        if task_temp_dir and task_temp_dir.exists():
             try:
-                translated_path.unlink()
-            except Exception as e:
-                logger.warning(f"Failed to delete temporary translated file {translated_path}: {e}")
+                task_temp_dir.rmdir()
+            except Exception:
+                pass
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
@@ -567,7 +586,7 @@ async def get_progress(
                 "completed": task_state["completed"],
                 "audio_file": task_state["audio_file"],
                 "error": task_state["error"],
-                "logs": [l["message"] for l in new_logs],
+                "logs": [log_item["message"] for log_item in new_logs],
                 "last_log_id": current_last_id
             }
             

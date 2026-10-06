@@ -22,7 +22,7 @@ async def test_openai_clone_voice_raises_error():
 async def test_openai_generate_audio(mock_post, tmp_path):
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.content = b"fake-audio-bytes"
+    mock_response.content = b"fake-audio-bytes" * 10
     mock_post.return_value = mock_response
 
     client = OpenAITTSClient(api_key="dummy-key")
@@ -30,7 +30,7 @@ async def test_openai_generate_audio(mock_post, tmp_path):
     
     await client.generate_audio("Hello", out_path)
     assert out_path.exists()
-    assert out_path.read_bytes() == b"fake-audio-bytes"
+    assert out_path.read_bytes() == b"fake-audio-bytes" * 10
 
 @pytest.mark.anyio
 @patch("httpx.AsyncClient.post")
@@ -43,7 +43,7 @@ async def test_openai_generate_audio_retry_success(mock_sleep, mock_post, tmp_pa
     
     mock_success_response = AsyncMock()
     mock_success_response.status_code = 200
-    mock_success_response.content = b"retry-audio-bytes"
+    mock_success_response.content = b"retry-audio-bytes" * 10
     
     mock_post.side_effect = [mock_fail_response, mock_success_response]
     
@@ -52,7 +52,7 @@ async def test_openai_generate_audio_retry_success(mock_sleep, mock_post, tmp_pa
     
     await client.generate_audio("Hello retry", out_path)
     assert out_path.exists()
-    assert out_path.read_bytes() == b"retry-audio-bytes"
+    assert out_path.read_bytes() == b"retry-audio-bytes" * 10
     assert mock_post.call_count == 2
     mock_sleep.assert_called_once_with(1)  # 2^0 = 1 second backoff for first retry
 
@@ -75,3 +75,20 @@ async def test_openai_generate_audio_retry_failure(mock_sleep, mock_post, tmp_pa
     assert not out_path.exists()
     assert mock_post.call_count == 3
     assert mock_sleep.call_count == 2  # Sleeps after attempt 1 (1s) and attempt 2 (2s)
+
+
+@pytest.mark.anyio
+@patch("httpx.AsyncClient.post")
+@patch("asyncio.sleep", return_value=None)
+async def test_openai_generate_audio_too_small(mock_sleep, mock_post, tmp_path):
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.content = b"too small"
+    mock_post.return_value = mock_response
+
+    client = OpenAITTSClient(api_key="dummy-key")
+    out_path = tmp_path / "test_openai_small.mp3"
+
+    with pytest.raises(RuntimeError, match="too small"):
+        await client.generate_audio("Hello", out_path, retry_count=1)
+

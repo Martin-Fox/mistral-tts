@@ -11,6 +11,7 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
 - **Integrated Translation:** Translate source files from a source language to a target language using configurable Mistral chat models (default: `ministral-8b-latest`, with support for `ministral-3b-latest`, `mistral-small-latest`, `mistral-medium-latest`, and `mistral-large-latest`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
 - **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`), and electronic books (`.epub` and unencrypted `.mobi`), automatically extracting content in the correct reading order.
+- **Audio Truncation Safeguard & Duration Verification:** Appends format-matched trailing silence padding (1.0s default) to prevent FFmpeg `loudnorm` filter buffer cutoff at stream end. Probes chunk durations with `ffprobe` and enforces strict end-to-end duration verification (4.0s tolerance) to guarantee no audio is lost.
 
 
 - **Zero-Shot Voice Cloning:** Instantly clones any voice profile using a 3-to-10-second reference audio sample.
@@ -246,7 +247,7 @@ When `--target-lang` is specified, source text is translated using the Mistral C
 - **`src/core/config.py`**: Environment management and persistent `.env` synchronization for runtime configuration.
 - **`src/core/text_splitter.py`**: Handles semantic chunking logic.
 - **`src/api/mistral_client.py`**: Wrapper for Voxtral API interaction, voice cloning, and text translation.
-- **`src/core/audio_compiler.py`**: FFmpeg-based stitching and metadata manipulation.
+- **`src/core/audio_compiler.py`**: FFmpeg-based stitching, pause/trailing silence injection, loudness normalization (`loudnorm`), and duration verification.
 - **`src/cli.py`**: Primary command-line interface entry point.
 
 
@@ -325,6 +326,7 @@ docker run --rm \
 - [x] **EPUB Support:** Ingest and parse EPUB files to extract chapters while preserving document structure.
 - [x] **MOBI Support:** Ingest and parse MOBI files to extract chapters for synthesis.
 - [x] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
+- [x] **Audio Truncation Safeguard & Duration Verification:** Enforce end-to-end duration verification and trailing silence padding.
 
 
 
