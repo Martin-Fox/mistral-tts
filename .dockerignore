@@ -15,5 +15,4 @@ docs/
 ai_light/
 .pytest_cache/
 .ruff_cache/
-storage/cache/*
-storage/output/*
+storage/

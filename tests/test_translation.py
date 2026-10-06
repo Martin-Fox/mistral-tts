@@ -23,7 +23,7 @@ async def test_translate_text():
     assert res == "Hola Mundo"
     client.client.chat.complete_async.assert_called_once()
     call_kwargs = client.client.chat.complete_async.call_args[1]
-    assert call_kwargs["model"] == "mistral-large-latest"
+    assert call_kwargs["model"] == client.translation_model
     assert call_kwargs["messages"][0]["content"].strip().endswith("Hello World")
 
 
@@ -154,6 +154,7 @@ async def test_translate_file_epub():
             assert "Capítulo Uno: Hola Mundo." in content
 
 
+
 @pytest.mark.anyio
 async def test_translate_file_mobi():
     client = MistralTTSClient(api_key="dummy_key")
@@ -192,5 +193,43 @@ async def test_translate_file_mobi():
             assert out_file.suffix == ".txt"
             content = out_file.read_text(encoding="utf-8")
             assert "Capítulo Uno: Hola Mundo." in content
+
+
+@pytest.mark.anyio
+async def test_client_custom_translation_model():
+    """Verify that MistralTTSClient accepts a custom translation_model and passes it to complete_async."""
+    client = MistralTTSClient(api_key="dummy_key", translation_model="mistral-large-latest")
+    assert client.translation_model == "mistral-large-latest"
+
+    client.client = MagicMock()
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Bonjour"
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    res = await client.translate_text("Hello", "English", "French")
+    assert res == "Bonjour"
+    call_kwargs = client.client.chat.complete_async.call_args[1]
+    assert call_kwargs["model"] == "mistral-large-latest"
+
+
+def test_client_translation_model_fallback(monkeypatch):
+    """Verify fallback hierarchy: explicit arg > env var > default."""
+    # 1. Env var set
+    monkeypatch.setenv("MISTRAL_TRANSLATION_MODEL", "mistral-small-latest")
+    client_env = MistralTTSClient(api_key="dummy_key")
+    assert client_env.translation_model == "mistral-small-latest"
+
+    # 2. Explicit arg overrides env var
+    client_override = MistralTTSClient(api_key="dummy_key", translation_model="ministral-3b-latest")
+    assert client_override.translation_model == "ministral-3b-latest"
+
+    # 3. Unset env var falls back to default ministral-8b-latest
+    monkeypatch.delenv("MISTRAL_TRANSLATION_MODEL", raising=False)
+    client_default = MistralTTSClient(api_key="dummy_key")
+    assert client_default.translation_model == "ministral-8b-latest"
+
+
 
 

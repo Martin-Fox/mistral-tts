@@ -9,7 +9,7 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 
 - **Interactive WebUI:** A premium, responsive single-page web application featuring glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, an in-browser console terminal streaming live server logs via Server-Sent Events (SSE), and a custom audio player for instant playback.
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
-- **Integrated Translation:** Translate source files from a source language to a target language using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
+- **Integrated Translation:** Translate source files from a source language to a target language using configurable Mistral chat models (default: `ministral-8b-latest`, with support for `ministral-3b-latest`, `mistral-small-latest`, `mistral-medium-latest`, and `mistral-large-latest`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
 - **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`), and electronic books (`.epub` and unencrypted `.mobi`), automatically extracting content in the correct reading order.
 
 
@@ -46,6 +46,9 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
    ```bash
    MISTRAL_API_KEY=your_mistral_api_key_here
    OPENAI_API_KEY=your_openai_api_key_here
+
+   # Translation model (defaults to ministral-8b-latest if omitted)
+   MISTRAL_TRANSLATION_MODEL=ministral-8b-latest
 
    # WebUI login credentials (defaults to admin/admin if not set)
    APP_USERNAME=admin
@@ -107,6 +110,31 @@ To use the OpenAI TTS synthesis engine (e.g., for languages like Polish where Mi
    ```
    *Note: Passing a file path to `--voice` when running with `--engine openai` will trigger a validation error.*
 
+### Translation Model Configuration
+
+When `--target-lang` is specified, the pipeline translates the input text via the Mistral Chat API prior to audio synthesis. By default, `ministral-8b-latest` is used instead of `mistral-large-latest` to ensure compatibility across all account tiers (including free/starter tiers) and avoid HTTP 403 `tier_not_allowed` errors.
+
+*(For a comprehensive comparison of Free vs. Paid tiers, rate limits, and audio capabilities, see the [Models & Account Tiers](#models--account-tiers) section below.)*
+
+#### Supported Models
+
+| Model ID | Display Name | Recommended Account Tier | Notes |
+| --- | --- | --- | --- |
+| `ministral-8b-latest` | Ministral 8B | Free, Starter, Enterprise | **Default.** Low latency, cost-effective, works on all tiers. |
+| `ministral-3b-latest` | Ministral 3B | Free, Starter, Enterprise | Ultra-lightweight edge model. |
+| `mistral-small-latest` | Mistral Small | Starter, Enterprise | Balanced speed and quality. |
+| `mistral-medium-latest` | Mistral Medium | Enterprise | High quality for literary and nuanced texts. |
+| `mistral-large-latest` | Mistral Large | Enterprise (Tier 2+) | Flagship reasoning model; requires elevated Mistral account tier. |
+
+#### Changing the Model
+
+- **WebUI:** Expand **Translation Settings** and select the desired model from the **Translation Model** dropdown. The selection is automatically sent to `POST /api/config` and saved directly to your `.env` file without requiring a backend restart.
+- **TUI:** Choose your preferred model in the **Trans Model** dropdown selector. Selection is immediately saved to `.env` and takes effect for subsequent generation runs.
+- **CLI / Headless:** Set the `MISTRAL_TRANSLATION_MODEL` environment variable in your `.env` file or export it in your shell:
+  ```bash
+  export MISTRAL_TRANSLATION_MODEL=mistral-small-latest
+  ```
+
 ### Parameters
 
 | Flag | Description |
@@ -121,6 +149,8 @@ To use the OpenAI TTS synthesis engine (e.g., for languages like Polish where Mi
 | `--engine` | TTS engine to use: `mistral` (default) or `openai`. |
 | `--openai-key` | Your OpenAI API key (overrides `OPENAI_API_KEY` in `.env`). |
 
+*Note: The translation model can be specified via the `MISTRAL_TRANSLATION_MODEL` variable in `.env` or in the environment (defaults to `ministral-8b-latest`).*
+
 ### Running Tests
 
 To run the automated test suite and verify the integrity of core modules, the translation pipeline, and the WebUI backend:
@@ -129,13 +159,93 @@ To run the automated test suite and verify the integrity of core modules, the tr
 PYTHONPATH=. pytest
 ```
 
+## 🎙️ Models & Account Tiers
+
+This project integrates both **Mistral AI** and **OpenAI** APIs to provide speech synthesis and automated translation. Capabilities, pricing, and rate limits vary depending on your account tier (**Free Tier** vs. **Paid / PAYG**).
+
+---
+
+### 1. Text-to-Speech (TTS) Engines
+
+#### Mistral AI Voxtral TTS
+- **Dedicated TTS Model:** `voxtral-mini-tts-latest` (snapshot: `voxtral-mini-tts-2603`).
+  > [!NOTE]
+  > Only `voxtral-mini-tts-latest` (and its dated snapshots) is designed for Text-to-Speech synthesis. Other models in the Voxtral family (such as `voxtral-small`) are Speech-to-Text (STT), transcription, and audio-understanding models, and cannot be used for speech generation.
+- **Key Capabilities:**
+  - **Zero-Shot Voice Cloning:** Clones any voice profile using a short 3–10 second reference audio sample (`.wav` or `.mp3`). The pipeline automatically applies FFmpeg spectral noise reduction (`afftdn`) to optimize cloning quality.
+  - **Emotionally Expressive Presets:** Built-in speaker presets offering rich emotional modulation (e.g., *Paul* with cheerful, sad, or confident tones; *Jane* with sarcastic delivery; *Oliver*, etc.).
+- **Supported Languages & Accents:** Optimized for **English** (US / UK), **French**, and **Spanish**. Unsupported languages (such as **Polish**) do not have native phonetic synthesis; translate the text into English, French, or Spanish before synthesis using the built-in translation pipeline, or switch to the OpenAI TTS engine.
+- **Tier Availability:**
+  - **Free Tier:** Fully accessible within Mistral's standard free community rate limits (RPM / TPM).
+  - **Paid / PAYG Tier:** Supported with elevated rate limits and concurrency for large book synthesis.
+
+#### OpenAI TTS
+- **Available Models:**
+  - `tts-1`: Standard low-latency model optimized for real-time applications and rapid batch processing.
+  - `tts-1-hd`: High-definition studio model offering superior bandwidth, dynamic range, and acoustic fidelity.
+- **Key Capabilities:**
+  - **Native Multilingual Synthesis:** Exceptional out-of-the-box support for dozens of languages—including **Polish** with authentic accents and natural pronunciation—without requiring prior translation.
+  - **Curated Voice Presets:** 6 fixed studio presets: `alloy`, `echo`, `fable`, `onyx`, `nova`, and `shimmer`.
+  - **No Voice Cloning:** OpenAI TTS does not support custom voice cloning from audio files.
+- **Tier Availability & Pricing:**
+  - Requires a funded OpenAI API account (Pay-As-You-Go).
+  - Standard pricing:
+    - `tts-1`: ~$0.015 per 1,000 input characters.
+    - `tts-1-hd`: ~$0.030 per 1,000 input characters.
+
+#### TTS Engine Comparison
+
+| Feature / Metric | Mistral AI (`voxtral-mini-tts-latest`) | OpenAI TTS (`tts-1` / `tts-1-hd`) |
+| :--- | :--- | :--- |
+| **Primary Specialty** | Zero-shot cloning & expressive emotional presets | Multilingual accuracy & polished studio presets |
+| **Voice Cloning** | ✅ Yes (3–10s audio sample) | ❌ No (preset voices only) |
+| **Preset Voices** | ✅ Expressive presets (Paul, Jane, Oliver, etc.) with emotion modulation | ✅ 6 curated voices (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) |
+| **Native Language Support** | English (US/UK), French, Spanish | 50+ languages natively (including Polish) |
+| **Unsupported Language Strategy** | Pre-translate via `--target-lang` before synthesis | Synthesize source text directly without translation |
+| **Account Tiers** | **Free Tier** & **Paid / PAYG** | **Paid / PAYG Only** |
+| **Pricing** | Free tier quotas / Mistral PAYG rates | `tts-1`: ~$0.015 / 1k chars<br>`tts-1-hd`: ~$0.030 / 1k chars |
+
+---
+
+### 2. Translation Models (Mistral Chat API)
+
+When `--target-lang` is specified, source text is translated using the Mistral Chat API prior to audio generation. Model selection directly impacts tier compatibility and rate limiting.
+
+#### Free Tier
+- **`ministral-8b-latest` (Default):**
+  - **Recommended default.** High-quality, fast, and cost-effective translation.
+  - **Zero 403 errors:** Fully accessible on free/starter tiers without permission errors.
+- **`ministral-3b-latest`:**
+  - Ultra-lightweight edge model with minimal token footprint; best for quick runs and simple phrasing.
+- **`mistral-small-latest`:**
+  - Higher literary capacity, but subject to strict Free tier RPM/TPM limits. Large books may encounter HTTP 429 (`rate_limited`) pauses.
+- **`mistral-large-latest`:**
+  - ❌ **Unavailable on Free Tier.** Calling this model without a paid account triggers HTTP 403 `tier_not_allowed`.
+
+#### Paid Tier (PAYG)
+- **`mistral-large-latest` (Flagship):**
+  - Unlocked on PAYG accounts. Delivers top-tier literary and nuanced translations, accurately rendering complex prose, idioms, and stylistic subtleties.
+- **High Concurrency & Throughput:**
+  - Significantly higher RPM and TPM quotas across all models (`ministral-8b`, `mistral-small`, `mistral-large`), reducing or eliminating rate-limit delays during long book translations.
+
+#### Translation Model & Tier Matrix
+
+| Model ID | Display Name | Free Tier | Paid / PAYG Tier | Translation Profile & Best Use Case |
+| :--- | :--- | :---: | :---: | :--- |
+| `ministral-8b-latest` | **Ministral 8B** | ✅ Supported (**Default**) | ✅ Supported | **Recommended Default.** Excellent translation quality and zero tier restrictions. |
+| `ministral-3b-latest` | **Ministral 3B** | ✅ Supported | ✅ Supported | Ultra-fast edge model; low latency and minimal resource consumption. |
+| `mistral-small-latest` | **Mistral Small** | ⚠️ Partial (strict 429 limits) | ✅ Supported | Strong translation quality; may hit rate limits on long-form Free tier tasks. |
+| `mistral-medium-latest`| **Mistral Medium**| ⚠️ Legacy / Restricted | ✅ Supported | High literary capability; generally superseded by Ministral 8B / Mistral Large. |
+| `mistral-large-latest` | **Mistral Large** | ❌ Blocked (HTTP 403 `tier_not_allowed`) | ✅ Supported | **Flagship literary model.** Best for novels, nuanced prose, and complex metaphors. |
+
 ## 🏗️ Architecture
 
 - **`src/tui.py`**: The interactive Terminal UI built with Textual.
 - **`src/web.py`**: FastAPI web server hosting API endpoints and background synthesis tasks.
 - **`src/web/static/`**: Contains HTML, CSS, and JS assets for the Single-Page Web application.
+- **`src/core/config.py`**: Environment management and persistent `.env` synchronization for runtime configuration.
 - **`src/core/text_splitter.py`**: Handles semantic chunking logic.
-- **`src/api/mistral_client.py`**: Wrapper for Voxtral API interaction and cloning.
+- **`src/api/mistral_client.py`**: Wrapper for Voxtral API interaction, voice cloning, and text translation.
 - **`src/core/audio_compiler.py`**: FFmpeg-based stitching and metadata manipulation.
 - **`src/cli.py`**: Primary command-line interface entry point.
 
@@ -168,6 +278,7 @@ docker run -d --rm \
   -v $(pwd)/storage:/app/storage \
   -e MISTRAL_API_KEY=your_key_here \
   -e OPENAI_API_KEY=your_openai_key_here \
+  -e MISTRAL_TRANSLATION_MODEL=ministral-8b-latest \
   -e APP_USERNAME=myuser \
   -e APP_PASSWORD=mypassword \
   --name mistral-tts \
@@ -203,7 +314,7 @@ docker run --rm \
 
 ## 🗺️ Future Roadmap
 
-- [x] **Integrated Translation:** Direct translation from Language A to Language B using the **Mistral Large** model (`v1/chat/completions`) before the TTS phase.
+- [x] **Integrated Translation:** Direct translation from Language A to Language B using configurable Mistral chat models (default: `ministral-8b-latest`, with support for Small, Medium, Large) before the TTS phase.
 - [x] **Interactive WebUI:** A responsive web application to configure runs, preview voices, and monitor generation.
 - [x] **Docker Containerization:** Containerize the application, bundling FFmpeg and Python dependencies for zero-setup deployments.
 - [x] **Basic Authentication Layer:** Secure the WebUI and API endpoints with session cookies for multi-user or network deployments.

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -9,6 +10,7 @@ from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
+from src.core.config import get_translation_model, save_translation_model
 
 class BooksmithTUI(App):
     CSS = """
@@ -63,11 +65,22 @@ class BooksmithTUI(App):
         ("Nova (Energetic/Female)", "nova"),
         ("Shimmer (Professional)", "shimmer"),
     ]
+    TRANSLATION_MODELS = [
+        ("Ministral 8B - Default", "ministral-8b-latest"),
+        ("Ministral 3B", "ministral-3b-latest"),
+        ("Mistral Small", "mistral-small-latest"),
+        ("Mistral Medium", "mistral-medium-latest"),
+        ("Mistral Large", "mistral-large-latest"),
+    ]
 
     def compose(self) -> ComposeResult:
         load_dotenv()
         api_key = os.getenv("MISTRAL_API_KEY", "")
         openai_key = os.getenv("OPENAI_API_KEY", "")
+        current_trans_model = get_translation_model()
+        valid_model_values = [v for _, v in self.TRANSLATION_MODELS]
+        if current_trans_model not in valid_model_values:
+            current_trans_model = "ministral-8b-latest"
         
         yield Header()
         with Container():
@@ -81,6 +94,9 @@ class BooksmithTUI(App):
                 with Horizontal(classes="form-row"):
                     yield Label("Target Lang:", classes="form-label")
                     yield Input(placeholder="e.g. Spanish (optional)", id="target-lang")
+                with Horizontal(classes="form-row"):
+                    yield Label("Trans Model:", classes="form-label")
+                    yield Select(self.TRANSLATION_MODELS, value=current_trans_model, id="translation-model-select")
                 with Horizontal(classes="form-row"):
                     yield Label("TTS Engine:", classes="form-label")
                     yield Select([("Mistral", "mistral"), ("OpenAI", "openai")], value="mistral", id="engine-select")
@@ -136,6 +152,14 @@ class BooksmithTUI(App):
                 voice_select.value = "en_paul_neutral"
                 voice_path_input.disabled = False
                 manual_voice_id_input.disabled = False
+        elif event.select.id == "translation-model-select":
+            model_name = event.value
+            if model_name and model_name is not Select.BLANK:
+                try:
+                    save_translation_model(str(model_name))
+                    self.log_message(f"Translation model updated: {model_name} (saved to .env)")
+                except Exception as e:
+                    self.log_message(f"Error saving translation model: {e}")
 
     def log_message(self, message: str):
         self.query_one("#log", Log).write_line(message)
@@ -151,6 +175,8 @@ class BooksmithTUI(App):
         engine = self.query_one("#engine-select", Select).value
         source_lang = self.query_one("#source-lang", Input).value.strip()
         target_lang = self.query_one("#target-lang", Input).value.strip()
+        trans_model_select = self.query_one("#translation-model-select", Select).value
+        translation_model = str(trans_model_select) if (trans_model_select and trans_model_select is not Select.BLANK) else get_translation_model()
 
         if not text_path or not output_path:
             self.log_message("Error: Text Path and Output Path are required.")
@@ -191,7 +217,8 @@ class BooksmithTUI(App):
             source_lang=source_lang,
             target_lang=target_lang,
             engine=engine,
-            openai_key=resolved_openai_key
+            openai_key=resolved_openai_key,
+            translation_model=translation_model
         ))
 
     async def process_book(
@@ -204,7 +231,8 @@ class BooksmithTUI(App):
         source_lang: str = "",
         target_lang: str = "",
         engine: str = "mistral",
-        openai_key: str = ""
+        openai_key: str = "",
+        translation_model: Optional[str] = None
     ):
         try:
             tp = Path(text_path)
@@ -232,7 +260,7 @@ class BooksmithTUI(App):
                 source = source_lang if source_lang else "English"
                 self.query_one("#status-label", Static).update(f"Status: Translating to {target_lang}...")
                 self.log_message(f"Translating {tp.name} from {source} to {target_lang}...")
-                translation_client = MistralTTSClient(api_key=api_key)
+                translation_client = MistralTTSClient(api_key=api_key, translation_model=translation_model)
                 tp = await translation_client.translate_file(tp, source, target_lang)
                 self.log_message(f"Translation completed. Saved to {tp}")
 

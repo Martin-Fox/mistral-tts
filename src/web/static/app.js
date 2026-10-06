@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleApiVisibilityBtn = document.getElementById('toggle-api-visibility');
     const translationToggle = document.getElementById('translation-toggle');
     const translationSubform = document.getElementById('translation-subform');
+    const translationModelSelect = document.getElementById('translation-model');
     const engineSelect = document.getElementById('engine');
     const openaiKeyInput = document.getElementById('openai-key');
     const toggleOpenaiVisibilityBtn = document.getElementById('toggle-openai-visibility');
@@ -230,6 +231,48 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // === 3b. Translation Model Configuration ===
+    async function loadConfig() {
+        try {
+            const response = await fetch('/api/config', {
+                credentials: 'same-origin'
+            });
+            if (response.status === 401) {
+                // Not authenticated yet, gracefully ignore until login
+                return;
+            }
+            if (response.ok) {
+                const data = await response.json();
+                if (data.translation_model && translationModelSelect) {
+                    translationModelSelect.value = data.translation_model;
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load config:', error);
+        }
+    }
+
+    if (translationModelSelect) {
+        translationModelSelect.addEventListener('change', async () => {
+            const selectedModel = translationModelSelect.value;
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ translation_model: selectedModel })
+                });
+                if (!response.ok) {
+                    console.error('Failed to save translation model to config');
+                }
+            } catch (error) {
+                console.error('Error saving translation model:', error);
+            }
+        });
+    }
+
     // === 4. Drag-and-Drop File Zones ===
     function setupDropzone(dropzoneId, inputId, fileNameId, defaultText) {
         const dropzone = document.getElementById(dropzoneId);
@@ -365,6 +408,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!translationToggle.checked) {
             formData.delete('source_lang');
             formData.delete('target_lang');
+        }
+
+        // Ensure translation model is included
+        if (translationModelSelect && translationModelSelect.value) {
+            formData.set('translation_model', translationModelSelect.value);
         }
 
         // --- UI Transition ---
@@ -663,6 +711,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             if (data.authenticated) {
                 if (loginOverlay) loginOverlay.classList.add('hidden');
+                loadConfig();
             } else {
                 if (loginOverlay) loginOverlay.classList.remove('hidden');
             }
@@ -700,6 +749,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.ok) {
                     showLoginStatus('Login successful.', 'success');
                     loginForm.reset();
+                    loadConfig();
                     setTimeout(() => {
                         if (loginOverlay) loginOverlay.classList.add('hidden');
                     }, 500);
@@ -734,6 +784,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Run auth status check on initialization
+    // Run auth status check and load configuration on initialization
     checkAuthStatus();
+    loadConfig();
 });
