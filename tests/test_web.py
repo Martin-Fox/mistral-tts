@@ -663,6 +663,114 @@ async def test_run_generation_pipeline_with_text_file_data():
                 conn.close()
 
 
+def test_generate_invalid_source_lang():
+    """Assert that /api/generate rejects invalid source_lang with HTTP 400."""
+    data = {
+        "api_key": "test_api_key",
+        "text_content": "Valid text content",
+        "source_lang": "invalid!@#$",
+        "target_lang": "Spanish"
+    }
+    response = client.post("/api/generate", data=data)
+    assert response.status_code == 400
+    assert "Invalid source_lang" in response.json()["detail"]
+
+
+def test_generate_invalid_target_lang():
+    """Assert that /api/generate rejects invalid target_lang with HTTP 400."""
+    data = {
+        "api_key": "test_api_key",
+        "text_content": "Valid text content",
+        "source_lang": "English",
+        "target_lang": "../../etc/passwd"
+    }
+    response = client.post("/api/generate", data=data)
+    assert response.status_code == 400
+    assert "Invalid target_lang" in response.json()["detail"]
+
+
+def test_generate_valid_languages(monkeypatch):
+    """Assert that /api/generate accepts valid source_lang and target_lang."""
+    with patch("src.web.run_generation_pipeline"):
+        data = {
+            "api_key": "test_api_key",
+            "text_content": "Valid text content",
+            "source_lang": "English",
+            "target_lang": "Latin American Spanish"
+        }
+        response = client.post("/api/generate", data=data)
+        assert response.status_code == 200
+        assert "task_id" in response.json()
+
+
+@pytest.mark.parametrize("invalid_lang", [
+    "a",                          # too short (< 2)
+    "a" * 41,                     # too long (> 40)
+    "../../etc/passwd",           # path traversal
+    "../secret",                  # path traversal
+    "en\nrm -rf /",               # CRLF / command injection
+    "en\r\nHeader: Value",        # CRLF injection
+    "en; DROP TABLE",             # SQL injection attempt
+    "<script>alert(1)</script>",  # XSS attempt
+    "en\x00es",                   # Null byte
+    "1234",                       # Digits only
+    "en_US",                      # Underscore not allowed by regex
+    "en!es",                      # Exclamation mark
+    "es@domain",                  # @ symbol
+    "fr#test",                    # hash symbol
+    "es$var",                     # dollar symbol
+    "`whoami`",                   # backticks
+])
+def test_generate_malformed_and_malicious_languages_rejected(invalid_lang):
+    """Assert that /api/generate rejects all malicious and malformed languages with HTTP 400."""
+    # Test as source_lang
+    data_source = {
+        "api_key": "test_api_key",
+        "text_content": "Valid content",
+        "source_lang": invalid_lang,
+        "target_lang": "Spanish"
+    }
+    res_source = client.post("/api/generate", data=data_source)
+    assert res_source.status_code == 400
+    assert "Invalid source_lang" in res_source.json()["detail"]
+
+    # Test as target_lang
+    data_target = {
+        "api_key": "test_api_key",
+        "text_content": "Valid content",
+        "source_lang": "English",
+        "target_lang": invalid_lang
+    }
+    res_target = client.post("/api/generate", data=data_target)
+    assert res_target.status_code == 400
+    assert "Invalid target_lang" in res_target.json()["detail"]
+
+
+@pytest.mark.parametrize("valid_lang", [
+    "en",
+    "a" * 40,
+    "English",
+    "Latin American Spanish",
+    "pt-BR",
+    "zh-Hans",
+    "  fr  ",  # Leading/trailing whitespace should be stripped and accepted
+])
+def test_generate_valid_language_variations(valid_lang):
+    """Assert that /api/generate accepts valid language strings."""
+    with patch("src.web.run_generation_pipeline"):
+        data = {
+            "api_key": "test_api_key",
+            "text_content": "Valid text content",
+            "source_lang": valid_lang,
+            "target_lang": valid_lang
+        }
+        response = client.post("/api/generate", data=data)
+        assert response.status_code == 200
+        assert "task_id" in response.json()
+
+
+
+
 
 
 

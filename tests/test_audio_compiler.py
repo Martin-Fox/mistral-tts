@@ -151,3 +151,106 @@ def test_probe_duration_error_handling(tmp_path):
         with pytest.raises(RuntimeError, match="Failed to probe duration"):
             compiler._probe_duration(dummy_file)
 
+
+def test_probe_duration_exact_ffmpeg_null_decoding(tmp_path):
+    compiler = AudioCompiler()
+    dummy_file = tmp_path / "test.mp3"
+    dummy_file.write_text("fake audio")
+
+    fake_stderr = (
+        "Output #0, null, to 'pipe:':\n"
+        "size=N/A time=00:00:05.12 bitrate=N/A speed=100x\n"
+        "size=N/A time=00:01:23.45 bitrate=N/A speed=120x\n"
+        "video:0kB audio:100kB\n"
+    )
+
+    with patch("subprocess.run") as mock_sub:
+        mock_sub.return_value = subprocess.CompletedProcess(
+            args=["ffmpeg", "-nostats", "-v", "info", "-i", str(dummy_file), "-f", "null", "-"],
+            returncode=0,
+            stdout="",
+            stderr=fake_stderr
+        )
+        duration = compiler._probe_duration(dummy_file)
+
+        mock_sub.assert_called_once_with(
+            ["ffmpeg", "-nostats", "-v", "info", "-i", str(dummy_file), "-f", "null", "-"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30.0
+        )
+        # 1 * 60 + 23.45 = 83.45
+        assert duration == pytest.approx(83.45, rel=1e-5)
+
+
+def test_probe_duration_timeout_raises_runtime_error(tmp_path):
+    compiler = AudioCompiler()
+    dummy_file = tmp_path / "test.mp3"
+    dummy_file.write_text("fake audio")
+
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=30.0)):
+        with pytest.raises(RuntimeError, match="Failed to probe duration"):
+            compiler._probe_duration(dummy_file)
+
+
+@pytest.mark.parametrize("corrupt_stderr", [
+    "size=N/A time=N/A bitrate=N/A",
+    "size=N/A time=--:--:-- bitrate=N/A",
+    "size=N/A time=12:34 bitrate=N/A",  # missing fractional seconds
+    "[mp3 @ 0x55555] Header missing\nConversion failed!\n",
+    "Output #0, null, to 'pipe:':\nvideo:0kB audio:0kB\n",
+    "",
+])
+def test_probe_duration_corrupt_stderr_raises_runtime_error(tmp_path, corrupt_stderr):
+    compiler = AudioCompiler()
+    dummy_file = tmp_path / "corrupt.mp3"
+    dummy_file.write_text("dummy")
+
+    with patch("subprocess.run") as mock_sub:
+        mock_sub.return_value = subprocess.CompletedProcess(
+            args=["ffmpeg"],
+            returncode=0,
+            stdout="",
+            stderr=corrupt_stderr
+        )
+        with pytest.raises(RuntimeError, match="Failed to probe duration"):
+            compiler._probe_duration(dummy_file)
+
+
+def test_probe_duration_ffmpeg_process_failure_raises_runtime_error(tmp_path):
+    compiler = AudioCompiler()
+    dummy_file = tmp_path / "failing.mp3"
+    dummy_file.write_text("dummy")
+
+    with patch("subprocess.run", side_effect=subprocess.CalledProcessError(returncode=1, cmd=["ffmpeg"], stderr="ffmpeg error")):
+        with pytest.raises(RuntimeError, match="Failed to probe duration"):
+            compiler._probe_duration(dummy_file)
+
+
+def test_probe_duration_multihour_and_high_precision(tmp_path):
+    compiler = AudioCompiler()
+    dummy_file = tmp_path / "long.mp3"
+    dummy_file.write_text("dummy")
+
+    fake_stderr = (
+        "Output #0, null, to 'pipe:':\n"
+        "size=N/A time=00:00:10.500 bitrate=N/A speed=10x\n"
+        "[warning] frame rate conversion\n"
+        "size=N/A time=02:15:30.750 bitrate=N/A speed=12x\n"
+        "video:0kB audio:5000kB\n"
+    )
+
+    with patch("subprocess.run") as mock_sub:
+        mock_sub.return_value = subprocess.CompletedProcess(
+            args=["ffmpeg"],
+            returncode=0,
+            stdout="",
+            stderr=fake_stderr
+        )
+        duration = compiler._probe_duration(dummy_file)
+        # 2*3600 + 15*60 + 30.750 = 7200 + 900 + 30.750 = 8130.75
+        assert duration == pytest.approx(8130.75, rel=1e-5)
+
+
+

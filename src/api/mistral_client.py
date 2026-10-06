@@ -228,9 +228,10 @@ class MistralTTSClient(BaseTTSClient):
                     choice = response.choices[0]
                     finish_reason = getattr(choice, "finish_reason", None)
                     if finish_reason == "length":
-                        logger.warning(
-                            "Mistral translation was truncated because token generation limit was reached (finish_reason='length')!"
+                        logger.error(
+                            "Mistral translation exceeded token output capacity (finish_reason='length')."
                         )
+                        raise RuntimeError("Mistral translation exceeded token output capacity (finish_reason='length').")
                     return choice.message.content.strip()
                 raise ValueError("Empty response from translation API")
             except Exception as e:
@@ -297,10 +298,14 @@ class MistralTTSClient(BaseTTSClient):
         translations_dir = Path("storage/translations")
         translations_dir.mkdir(parents=True, exist_ok=True)
         
+        sanitized_target_lang = re.sub(r"[^a-zA-Z0-9_-]", "_", target_lang.lower())
         output_suffix = ".txt" if suffix in {".epub", ".mobi"} else input_path.suffix
         if not output_filename:
-            output_filename = f"{input_path.stem}_translated_{target_lang.lower().replace(' ', '_')}{output_suffix}"
+            output_filename = f"{input_path.stem}_translated_{sanitized_target_lang}{output_suffix}"
         output_path = translations_dir / output_filename
+
+        if not output_path.resolve().is_relative_to(translations_dir.resolve()):
+            raise ValueError(f"Path traversal detected: {output_filename}")
 
         if is_srt:
             # Parse SRT blocks cleanly without dropping blocks
@@ -381,7 +386,8 @@ class MistralTTSClient(BaseTTSClient):
                     
                     choice = response.choices[0]
                     if getattr(choice, "finish_reason", None) == "length":
-                        logger.warning("Batch translation output was truncated (finish_reason='length')!")
+                        logger.error("Mistral translation exceeded token output capacity (finish_reason='length').")
+                        raise RuntimeError("Mistral translation exceeded token output capacity (finish_reason='length').")
 
                     res_content = choice.message.content
                     res_json = json.loads(res_content)

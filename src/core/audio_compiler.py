@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import List, Optional
@@ -22,7 +23,7 @@ class AudioCompiler:
 
     def _probe_duration(self, file_path: Path) -> float:
         """
-        Probe the duration of an audio file in seconds using ffprobe.
+        Probe the exact decoded playback duration of an audio file in seconds using FFmpeg null decoding.
 
         Args:
             file_path (Path): Path to the audio file.
@@ -32,22 +33,22 @@ class AudioCompiler:
 
         Raises:
             FileNotFoundError: If the audio file does not exist.
-            RuntimeError: If ffprobe fails or returns an invalid/empty duration.
+            RuntimeError: If FFmpeg decoding fails or returns an invalid duration.
         """
         if not file_path.exists():
             raise FileNotFoundError(f"Audio file not found for duration probing: {file_path}")
         cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(file_path)
+            "ffmpeg", "-nostats", "-v", "info",
+            "-i", str(file_path),
+            "-f", "null", "-"
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            duration_str = result.stdout.strip()
-            if not duration_str:
-                raise ValueError(f"Empty duration returned by ffprobe for {file_path}")
-            return float(duration_str)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30.0)
+            matches = re.findall(r"time=(\d+):(\d+):(\d+\.\d+)", result.stderr)
+            if not matches:
+                raise ValueError(f"Could not parse duration from FFmpeg output for {file_path}")
+            hours, minutes, seconds = matches[-1]
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
         except Exception as e:
             raise RuntimeError(f"Failed to probe duration for {file_path}: {e}") from e
 
