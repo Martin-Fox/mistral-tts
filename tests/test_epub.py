@@ -1,4 +1,3 @@
-import pytest
 import zipfile
 import tempfile
 from pathlib import Path

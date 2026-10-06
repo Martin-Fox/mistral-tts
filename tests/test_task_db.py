@@ -1,6 +1,4 @@
-import pytest
 import time
-from pathlib import Path
 from src.core.task_db import TaskDatabase
 
 def test_database_lifecycle(tmp_path):

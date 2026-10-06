@@ -1,6 +1,5 @@
 import sqlite3
 import time
-import os
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
