@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from src.web import app, db, get_audio, verify_session
+from src.web import app, db, get_audio, verify_session, get_cache_key, run_generation_pipeline
 
 # Bypass authentication by default in tests
 app.dependency_overrides[verify_session] = lambda: "session-id"
@@ -370,6 +370,233 @@ async def test_background_purger():
     # 4. Assert task is deleted and logs cascaded
     assert db.get_task(task_id) is None
     assert len(db.get_logs(task_id)) == 0
+
+
+def test_config_endpoints_require_session():
+    """Assert that accessing /api/config without a valid session cookie returns 401."""
+    app.dependency_overrides.clear()
+    unauthed_client = TestClient(app)
+    try:
+        get_res = unauthed_client.get("/api/config")
+        assert get_res.status_code == 401
+        assert "Not authenticated" in get_res.json()["detail"]
+
+        post_res = unauthed_client.post("/api/config", json={"translation_model": "mistral-large-latest"})
+        assert post_res.status_code == 401
+        assert "Not authenticated" in post_res.json()["detail"]
+    finally:
+        app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_config_endpoints_with_session_cookie():
+    """Assert that accessing /api/config with a valid session cookie succeeds."""
+    from src.web import active_sessions
+    app.dependency_overrides.clear()
+    valid_sid = "test-session-config-123"
+    active_sessions.add(valid_sid)
+    session_client = TestClient(app)
+    session_client.cookies.set("session_id", valid_sid)
+    try:
+        get_res = session_client.get("/api/config")
+        assert get_res.status_code == 200
+        assert "translation_model" in get_res.json()
+
+        with patch("src.web.save_translation_model") as mock_save, \
+             patch("src.web.get_translation_model", return_value="mistral-large-latest"):
+            post_res = session_client.post(
+                "/api/config",
+                json={"translation_model": "mistral-large-latest"}
+            )
+            assert post_res.status_code == 200
+            assert post_res.json()["translation_model"] == "mistral-large-latest"
+            mock_save.assert_called_once_with("mistral-large-latest")
+    finally:
+        active_sessions.discard(valid_sid)
+        app.dependency_overrides[verify_session] = lambda: "session-id"
+
+
+def test_post_config_injection_rejected():
+    """Assert that CRLF or invalid characters in translation_model are rejected by POST /api/config with 400."""
+    response = client.post("/api/config", json={"translation_model": "ministral\r\nEVIL=1"})
+    assert response.status_code == 400
+    assert "Invalid model name format" in response.json()["detail"]
+
+
+def test_get_config():
+    """Assert that GET /api/config returns 200 and the current translation model."""
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    data = response.json()
+    assert "translation_model" in data
+    assert isinstance(data["translation_model"], str)
+    assert len(data["translation_model"]) > 0
+
+
+def test_post_config_json_success():
+    """Assert that POST /api/config updates translation model via JSON body."""
+    with patch("src.web.save_translation_model") as mock_save, \
+         patch("src.web.get_translation_model", return_value="mistral-large-latest"):
+        response = client.post("/api/config", json={"translation_model": "mistral-large-latest"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["translation_model"] == "mistral-large-latest"
+        mock_save.assert_called_once_with("mistral-large-latest")
+
+
+def test_post_config_form_success():
+    """Assert that POST /api/config updates translation model via form data."""
+    with patch("src.web.save_translation_model") as mock_save, \
+         patch("src.web.get_translation_model", return_value="ministral-3b-latest"):
+        response = client.post(
+            "/api/config",
+            data={"translation_model": "ministral-3b-latest"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["translation_model"] == "ministral-3b-latest"
+        mock_save.assert_called_once_with("ministral-3b-latest")
+
+
+def test_post_config_invalid_json():
+    """Assert that sending malformed JSON to POST /api/config returns 400."""
+    response = client.post(
+        "/api/config",
+        content=b"{malformed_json: true",
+        headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 400
+    assert "Invalid JSON body" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("invalid_payload", [
+    {"translation_model": ""},
+    {"translation_model": "   "},
+    {"translation_model": 12345},
+    {"translation_model": None},
+    {},
+    {"other_field": "model"}
+])
+def test_post_config_validation_failures(invalid_payload):
+    """Assert that missing, empty, or non-string translation_model returns 400."""
+    response = client.post("/api/config", json=invalid_payload)
+    assert response.status_code == 400
+    assert "translation_model is required and must be a non-empty string" in response.json()["detail"]
+
+
+def test_get_cache_key_includes_translation_model():
+    """Assert that differing translation_model values result in unique cache keys."""
+    key1 = get_cache_key("text", "preset", None, None, "English", "Spanish", translation_model="ministral-8b-latest")
+    key2 = get_cache_key("text", "preset", None, None, "English", "Spanish", translation_model="mistral-large-latest")
+    key_none = get_cache_key("text", "preset", None, None, "English", "Spanish", translation_model=None)
+
+    assert key1 != key2
+    assert key1 != key_none
+    assert key2 != key_none
+
+    # Identical inputs yield identical cache keys
+    key1_repeat = get_cache_key("text", "preset", None, None, "English", "Spanish", translation_model="ministral-8b-latest")
+    assert key1 == key1_repeat
+
+
+@patch("src.web.run_generation_pipeline")
+def test_generate_with_translation_model(mock_run_pipeline):
+    """Assert that passing translation_model to /api/generate forwards it to run_generation_pipeline."""
+    data = {
+        "api_key": "test_api_key",
+        "text_content": "This is test content.",
+        "voice_preset": "en_paul_neutral",
+        "output_filename": "audiobook.mp3",
+        "source_lang": "English",
+        "target_lang": "Polish",
+        "translation_model": "mistral-large-latest"
+    }
+    response = client.post("/api/generate", data=data)
+    assert response.status_code == 200
+    task_id = response.json()["task_id"]
+
+    mock_run_pipeline.assert_called_once_with(
+        task_id=task_id,
+        api_key="test_api_key",
+        openai_key="",
+        text_content="This is test content.",
+        text_file_data=None,
+        voice_file_data=None,
+        voice_preset="en_paul_neutral",
+        voice_manual_id=None,
+        source_lang="English",
+        target_lang="Polish",
+        output_filename="audiobook.mp3",
+        engine="mistral",
+        translation_model="mistral-large-latest"
+    )
+
+    # Clean up db
+    conn = db._get_connection()
+    try:
+        with conn:
+            conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    finally:
+        conn.close()
+
+
+@pytest.mark.anyio
+async def test_run_generation_pipeline_translation_model(tmp_path):
+    """Verify run_generation_pipeline initializes MistralTTSClient with translation_model."""
+    from unittest.mock import AsyncMock, MagicMock
+    task_id = "test-pipeline-trans-model"
+    db.create_task(task_id)
+
+    dummy_input = tmp_path / f"input_{task_id}.txt"
+    dummy_input.write_text("Hello world", encoding="utf-8")
+    dummy_trans = tmp_path / f"translated_{task_id}.txt"
+    dummy_trans.write_text("Hola mundo", encoding="utf-8")
+
+    with patch("src.web.MistralTTSClient") as mock_client_cls, \
+         patch("src.web.get_tts_client") as mock_get_tts, \
+         patch("src.web.AudioCompiler"), \
+         patch("src.core.epub_parser.read_input_text", return_value="Hello world"), \
+         patch("src.web.save_manifest"), \
+         patch("src.web.load_manifest", return_value={"chunks": [], "completed": []}), \
+         patch("src.web.TextSplitter") as mock_splitter:
+
+        mock_client = MagicMock()
+        mock_client.translate_file = AsyncMock(return_value=dummy_trans)
+        mock_client_cls.return_value = mock_client
+
+        mock_tts = MagicMock()
+        mock_tts.generate_audio_chunk = AsyncMock()
+        mock_get_tts.return_value = mock_tts
+
+        mock_splitter.return_value.split.return_value = ["Hola mundo"]
+
+        try:
+            await run_generation_pipeline(
+                task_id=task_id,
+                api_key="mistral_api_key",
+                text_content="Hello world",
+                text_file_data=None,
+                voice_file_data=None,
+                voice_preset="en_paul_neutral",
+                voice_manual_id=None,
+                source_lang="English",
+                target_lang="Spanish",
+                output_filename="audiobook.mp3",
+                engine="mistral",
+                translation_model="mistral-large-latest"
+            )
+            mock_client_cls.assert_any_call(api_key="mistral_api_key", translation_model="mistral-large-latest")
+        finally:
+            conn = db._get_connection()
+            try:
+                with conn:
+                    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            finally:
+                conn.close()
+
+
 
 
 

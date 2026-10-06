@@ -2,11 +2,16 @@ import asyncio
 import logging
 import base64
 import json
+import os
 import re
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
 from mistralai.client import Mistral
 from src.api.base_client import BaseTTSClient
+from src.core.config import get_translation_model
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +21,19 @@ class MistralTTSClient(BaseTTSClient):
     and asynchronous text-to-speech generation.
     """
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, translation_model: Optional[str] = None):
+        """
+        Initializes the Mistral TTS and translation client.
+
+        Args:
+            api_key: Mistral AI API key.
+            translation_model: Optional Mistral model identifier for translation.
+                Defaults to configured translation model (from get_translation_model()).
+        """
         super().__init__(api_key)
         self.client = Mistral(api_key=api_key.strip())
         self.model = "voxtral-mini-tts-2603"
+        self.translation_model = translation_model or get_translation_model()
         self.voice_sample_path: Optional[Path] = None
         self.voice_id: Optional[str] = None
 
@@ -165,7 +179,7 @@ class MistralTTSClient(BaseTTSClient):
 
     async def translate_text(self, text: str, source_lang: str, target_lang: str, retry_count: int = 5) -> str:
         """
-        Translates a single block of text from source_lang to target_lang using Mistral Large.
+        Translates a single block of text from source_lang to target_lang using the configured Mistral chat model.
         Includes rate-limit aware backoff retry logic (longer wait times for HTTP 429).
         """
         prompt = (
@@ -177,7 +191,7 @@ class MistralTTSClient(BaseTTSClient):
         for attempt in range(retry_count):
             try:
                 response = await self.client.chat.complete_async(
-                    model="mistral-large-latest",
+                    model=self.translation_model,
                     messages=[
                         {"role": "user", "content": prompt}
                     ]
@@ -281,7 +295,7 @@ class MistralTTSClient(BaseTTSClient):
                 for attempt in range(retry_count):
                     try:
                         response = await self.client.chat.complete_async(
-                            model="mistral-large-latest",
+                            model=self.translation_model,
                             messages=[{"role": "user", "content": prompt}],
                             response_format={"type": "json_object"}
                         )

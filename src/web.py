@@ -14,13 +14,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, ValidationError
 
 from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
 from src.core.task_db import TaskDatabase
+from src.core.config import get_translation_model, save_translation_model
 
 # Load environment variables from .env
 load_dotenv()
@@ -108,10 +109,23 @@ def get_cache_key(
     voice_manual_id: Optional[str],
     voice_bytes: Optional[bytes],
     source_lang: Optional[str],
-    target_lang: Optional[str]
+    target_lang: Optional[str],
+    translation_model: Optional[str] = None
 ) -> str:
     """
-    Generates a unique cache key based on translation and voice parameters.
+    Generates a unique cache key based on text, voice, and translation parameters.
+
+    Args:
+        text: Source text chunk to synthesize.
+        voice_preset: Preset voice name if used.
+        voice_manual_id: Custom voice ID if used.
+        voice_bytes: Reference voice audio bytes for cloning.
+        source_lang: Source language code/name.
+        target_lang: Target language code/name.
+        translation_model: Mistral model ID used for translation.
+
+    Returns:
+        str: SHA-256 hexadecimal hash string.
     """
     hasher = hashlib.sha256()
     hasher.update(text.encode("utf-8"))
@@ -125,6 +139,8 @@ def get_cache_key(
         hasher.update(source_lang.encode("utf-8"))
     if target_lang:
         hasher.update(target_lang.encode("utf-8"))
+    if translation_model:
+        hasher.update(translation_model.encode("utf-8"))
     return hasher.hexdigest()
 
 def load_manifest(manifest_path: Path) -> dict:
@@ -164,7 +180,8 @@ async def run_generation_pipeline(
     target_lang: Optional[str],
     output_filename: str,
     engine: str = "mistral",
-    openai_key: Optional[str] = None
+    openai_key: Optional[str] = None,
+    translation_model: Optional[str] = None
 ):
     """
     Asynchronous pipeline task that handles file translation, voice cloning,
@@ -217,7 +234,8 @@ async def run_generation_pipeline(
             voice_manual_id=voice_manual_id,
             voice_bytes=voice_bytes,
             source_lang=source_lang,
-            target_lang=target_lang
+            target_lang=target_lang,
+            translation_model=translation_model
         )
         cache_dir = Path("storage/cache") / cache_key
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +246,7 @@ async def run_generation_pipeline(
             db.update_task(task_id, status="Translating")
             source = source_lang or "English"
             logger.info(f"Translating text from {source} to {target_lang}...")
-            translation_client = MistralTTSClient(api_key=api_key)
+            translation_client = MistralTTSClient(api_key=api_key, translation_model=translation_model)
             translated_path = await translation_client.translate_file(text_path, source, target_lang)
             logger.info(f"Translation completed. Translated file: {translated_path}")
             with open(translated_path, "r", encoding="utf-8") as f:
@@ -437,6 +455,72 @@ def get_auth_status(request: Request):
         return {"authenticated": True, "username": APP_USERNAME}
     return {"authenticated": False}
 
+class ConfigUpdateRequest(BaseModel):
+    translation_model: str
+
+    @field_validator("translation_model", mode="before")
+    @classmethod
+    def validate_translation_model(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("translation_model is required and must be a non-empty string")
+        return v.strip()
+
+@app.get("/api/config")
+def get_config(session: str = Depends(verify_session)):
+    """
+    Returns the current translation model configuration.
+
+    Returns:
+        dict: JSON object with 'translation_model' key.
+    """
+    return {"translation_model": get_translation_model()}
+
+@app.post("/api/config")
+async def update_config(
+    request: Request,
+    session: str = Depends(verify_session)
+):
+    """
+    Updates the translation model configuration in .env and runtime environment.
+
+    Accepts JSON body ({"translation_model": "..."}) or form-encoded data.
+
+    Raises:
+        HTTPException: 400 if payload is invalid or 'translation_model' is missing/empty.
+
+    Returns:
+        dict: JSON response containing status and updated 'translation_model'.
+    """
+    content_type = request.headers.get("content-type", "")
+    data = {}
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("JSON body must be an object")
+            data = body
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+    else:
+        try:
+            form = await request.form()
+            data = dict(form)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid form data")
+
+    try:
+        req = ConfigUpdateRequest(**data)
+        save_translation_model(req.translation_model)
+    except ValidationError:
+        raise HTTPException(
+            status_code=400,
+            detail="translation_model is required and must be a non-empty string"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"status": "ok", "translation_model": get_translation_model()}
+
 @app.get("/")
 def read_root():
     """Serves the main frontend page."""
@@ -504,6 +588,7 @@ async def generate_audiobook(
     voice_manual_id: Optional[str] = Form(None),
     source_lang: Optional[str] = Form(None),
     target_lang: Optional[str] = Form(None),
+    translation_model: Optional[str] = Form(None),
     output_filename: str = Form("audiobook.mp3"),
     api_key: Optional[str] = Form(None),
     engine: str = Form("mistral"),
@@ -572,20 +657,26 @@ async def generate_audiobook(
     db.create_task(task_id)
 
     # Enqueue background execution task
+    pipeline_kwargs = {
+        "task_id": task_id,
+        "api_key": resolved_mistral_key,
+        "openai_key": resolved_openai_key,
+        "text_content": text_content,
+        "text_file_data": text_file_data,
+        "voice_file_data": voice_file_data,
+        "voice_preset": voice_preset,
+        "voice_manual_id": voice_manual_id,
+        "source_lang": source_lang,
+        "target_lang": target_lang,
+        "output_filename": safe_filename,
+        "engine": engine,
+    }
+    if translation_model is not None:
+        pipeline_kwargs["translation_model"] = translation_model
+
     background_tasks.add_task(
         run_generation_pipeline,
-        task_id=task_id,
-        api_key=resolved_mistral_key,
-        openai_key=resolved_openai_key,
-        text_content=text_content,
-        text_file_data=text_file_data,
-        voice_file_data=voice_file_data,
-        voice_preset=voice_preset,
-        voice_manual_id=voice_manual_id,
-        source_lang=source_lang,
-        target_lang=target_lang,
-        output_filename=safe_filename,
-        engine=engine
+        **pipeline_kwargs
     )
 
     return {"task_id": task_id}
