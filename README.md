@@ -9,6 +9,7 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 
 - **Interactive WebUI:** A premium, responsive single-page web application featuring glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, an in-browser console terminal streaming live server logs via Server-Sent Events (SSE), and a custom audio player for instant playback.
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
+- **Standalone Windows Executable:** Zero-setup portable Windows desktop distribution (`mistral-tts-windows-x64.zip`) bundling the executable, web assets, and embedded FFmpeg/FFprobe binaries—no Python, Docker, or manual PATH setup required.
 - **Integrated Translation:** Translate source files from a source language to a target language using configurable Mistral chat models (default: `ministral-8b-latest`, with support for `ministral-3b-latest`, `mistral-small-latest`, `mistral-medium-latest`, and `mistral-large-latest`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
 - **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`), and electronic books (`.epub` and unencrypted `.mobi`), automatically extracting content in the correct reading order.
 - **Audio Truncation Safeguard & Duration Verification:** Appends format-matched trailing silence padding (1.0s default) to prevent FFmpeg `loudnorm` filter buffer cutoff at stream end. Accurately verifies decoded presentation duration using FFmpeg null decoding (`-f null -`) to eliminate VBR header estimation drift, and enforces strict end-to-end duration verification (4.0s tolerance) to guarantee no audio is lost.
@@ -58,7 +59,17 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 
 ## 📖 Usage
 
-### Running the WebUI
+### 🖥️ Standalone Windows Executable (Zero Setup)
+
+For Windows users who prefer a zero-dependency setup without installing Python, Git, or FFmpeg:
+
+1. **Download:** Get the latest portable release archive `mistral-tts-windows-x64.zip` from [Releases](https://gitea.marcin-lis.pl/fox/mistral-tts/releases) or CI build artifacts.
+2. **Extract:** Unpack the zip archive into any directory of your choice.
+3. **Launch:** Run `mistral-tts.exe` or `run.bat`.
+   - The launcher will detect an open port (starting at `8000`), boot the backend server with bundled static assets and embedded FFmpeg/FFprobe binaries, and automatically open the WebUI in your default browser.
+   - Configure your API keys directly in the WebUI or via a `.env` file placed next to `mistral-tts.exe`.
+
+### Running the WebUI (Python)
 
 To launch the WebUI:
 
@@ -329,6 +340,7 @@ docker run --rm \
 - [x] **MOBI Support:** Ingest and parse MOBI files to extract chapters for synthesis.
 - [x] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
 - [x] **Audio Truncation Safeguard & Duration Verification:** Enforce end-to-end duration verification and trailing silence padding.
+- [x] **Standalone Windows Portable Executable (PyInstaller + FFmpeg bundle):** Bundled Windows executable and Gitea Actions CI pipeline creating zero-setup desktop zip packages.
 
 
 

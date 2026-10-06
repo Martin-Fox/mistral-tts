@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -27,8 +28,20 @@ from src.core.config import get_translation_model, save_translation_model
 # Load environment variables from .env
 load_dotenv()
 
+def get_static_dir() -> Path:
+    """Resolves static assets directory for PyInstaller bundle or local development."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass) / "src" / "web" / "static"
+    local_static = Path(__file__).resolve().parent / "web" / "static"
+    if local_static.exists():
+        return local_static
+    return Path("src/web/static")
+
+STATIC_DIR = get_static_dir()
+
 # Ensure directories exist on startup
-Path("src/web/static").mkdir(parents=True, exist_ok=True)
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
 Path("storage/cache").mkdir(parents=True, exist_ok=True)
 Path("storage/output").mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +89,7 @@ app = FastAPI(
 )
 
 # Mount static files directory
-app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 
@@ -545,7 +558,7 @@ async def update_config(
 @app.get("/")
 def read_root():
     """Serves the main frontend page."""
-    return FileResponse("src/web/static/index.html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 @app.get("/api/audio/{filename}")
 def get_audio(filename: str, session: str = Depends(verify_session)):
