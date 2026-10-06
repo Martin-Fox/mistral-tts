@@ -11,7 +11,7 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
 - **Integrated Translation:** Translate source files from a source language to a target language using configurable Mistral chat models (default: `ministral-8b-latest`, with support for `ministral-3b-latest`, `mistral-small-latest`, `mistral-medium-latest`, and `mistral-large-latest`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
 - **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`), and electronic books (`.epub` and unencrypted `.mobi`), automatically extracting content in the correct reading order.
-- **Audio Truncation Safeguard & Duration Verification:** Appends format-matched trailing silence padding (1.0s default) to prevent FFmpeg `loudnorm` filter buffer cutoff at stream end. Probes chunk durations with `ffprobe` and enforces strict end-to-end duration verification (4.0s tolerance) to guarantee no audio is lost.
+- **Audio Truncation Safeguard & Duration Verification:** Appends format-matched trailing silence padding (1.0s default) to prevent FFmpeg `loudnorm` filter buffer cutoff at stream end. Accurately verifies decoded presentation duration using FFmpeg null decoding (`-f null -`) to eliminate VBR header estimation drift, and enforces strict end-to-end duration verification (4.0s tolerance) to guarantee no audio is lost.
 
 
 - **Zero-Shot Voice Cloning:** Instantly clones any voice profile using a 3-to-10-second reference audio sample.

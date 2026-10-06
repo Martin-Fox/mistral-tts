@@ -36,6 +36,8 @@ Path("storage/output").mkdir(parents=True, exist_ok=True)
 # Set up logging
 logger = logging.getLogger("booksmith")
 
+LANG_REGEX = re.compile(r"^[a-zA-Z\s\-]{2,40}$")
+
 # Authentication configuration (for HTTP Basic Auth)
 AUTH_FILE = Path("storage/auth.json")
 APP_USERNAME = os.getenv("APP_USERNAME", "admin")
@@ -653,6 +655,27 @@ async def generate_audiobook(
             status_code=400,
             detail="Mistral API key is required for translation. Please enter it in the WebUI or set MISTRAL_API_KEY."
         )
+
+    # Validate languages if provided
+    if source_lang is not None and source_lang.strip():
+        if not LANG_REGEX.match(source_lang.strip()):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid source_lang. Must be 2-40 characters containing only letters, spaces, or hyphens."
+            )
+        source_lang = source_lang.strip()
+    else:
+        source_lang = None
+
+    if target_lang is not None and target_lang.strip():
+        if not LANG_REGEX.match(target_lang.strip()):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid target_lang. Must be 2-40 characters containing only letters, spaces, or hyphens."
+            )
+        target_lang = target_lang.strip()
+    else:
+        target_lang = None
 
     # Sanitize and validate the output audiobook filename to prevent path traversal
     safe_filename = Path(output_filename).name

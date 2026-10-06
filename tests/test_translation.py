@@ -244,11 +244,11 @@ async def test_translate_text_length_truncation_warning(caplog):
     mock_response.choices = [mock_choice]
     client.client.chat.complete_async = AsyncMock(return_value=mock_response)
 
-    with caplog.at_level(logging.WARNING):
-        res = await client.translate_text("Long text", "English", "Spanish")
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError, match="Mistral translation exceeded token output capacity \\(finish_reason='length'\\)"):
+            await client.translate_text("Long text", "English", "Spanish", retry_count=1)
 
-    assert res == "Truncated text..."
-    assert any("truncated" in r.message.lower() and "length" in r.message.lower() for r in caplog.records)
+    assert any("length" in r.message.lower() for r in caplog.records)
 
 
 @pytest.mark.anyio
@@ -407,10 +407,65 @@ Some text.
             return Path(*args)
         mock_path.side_effect = path_side_effect
 
-        with caplog.at_level(logging.WARNING):
-            await client.translate_file(input_file, "English", "Spanish")
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError, match="Mistral translation exceeded token output capacity \\(finish_reason='length'\\)"):
+                with patch.object(
+                    client,
+                    "translate_text",
+                    side_effect=RuntimeError("Mistral translation exceeded token output capacity (finish_reason='length')")
+                ):
+                    await client.translate_file(input_file, "English", "Spanish")
 
-        assert any("truncated" in r.message.lower() and "length" in r.message.lower() for r in caplog.records)
+        assert any("length" in r.message.lower() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_translate_file_srt_length_fallback_to_individual_success(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    batch_resp = MagicMock()
+    batch_choice = MagicMock()
+    batch_choice.finish_reason = "length"
+    batch_choice.message.content = json.dumps({"translations": ["Línea traducida."]})
+    batch_resp.choices = [batch_choice]
+
+    indiv_resp = MagicMock()
+    indiv_choice = MagicMock()
+    indiv_choice.finish_reason = "stop"
+    indiv_choice.message.content = "Texto individual traducido."
+    indiv_resp.choices = [indiv_choice]
+
+    client.client.chat.complete_async = AsyncMock(side_effect=[batch_resp, indiv_resp])
+
+    srt_content = """1
+00:00:01,000 --> 00:00:03,000
+Some text.
+"""
+    input_file = tmp_path / "test_fallback.srt"
+    input_file.write_text(srt_content, encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path:
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        out_file = await client.translate_file(input_file, "English", "Spanish")
+        assert out_file.exists()
+        content = out_file.read_text(encoding="utf-8")
+        assert "Texto individual traducido." in content
+
+
+@pytest.mark.anyio
+async def test_translate_file_path_traversal_prevention(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    input_file = tmp_path / "test.txt"
+    input_file.write_text("Hello", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        await client.translate_file(input_file, "English", "Spanish", output_filename="../../etc/passwd")
 
 
 @pytest.mark.anyio
@@ -452,6 +507,83 @@ async def test_translate_file_splits_long_paragraphs_with_trailing_unpunctuated_
         assert out_file.exists()
         # Verify that trailing unpunctuated text was passed into one of the translation chunks
         assert any(trailing_unpunctuated in chunk for chunk in captured_chunks)
+
+
+@pytest.mark.anyio
+async def test_translate_file_txt_length_truncation_raises_runtime_error(tmp_path, caplog):
+    import logging
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "length"
+    mock_choice.message.content = "Truncated text..."
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    input_file = tmp_path / "input_truncated.txt"
+    input_file.write_text("Sentence to translate.", encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path, \
+         patch("src.api.mistral_client.asyncio.sleep"):
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError, match="Mistral translation exceeded token output capacity \\(finish_reason='length'\\)"):
+                await client.translate_file(input_file, "English", "Spanish")
+
+        assert any("length" in r.message.lower() for r in caplog.records)
+        # Ensure no output file or temporary file was leaked
+        assert not (tmp_path / "input_truncated_translated_spanish.txt").exists()
+        assert not (tmp_path / "input_truncated_translated_spanish.txt.tmp").exists()
+
+
+@pytest.mark.anyio
+async def test_translate_file_target_lang_path_traversal_sanitized(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    client.client = MagicMock()
+
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "stop"
+    mock_choice.message.content = "Traducido"
+    mock_response.choices = [mock_choice]
+    client.client.chat.complete_async = AsyncMock(return_value=mock_response)
+
+    input_file = tmp_path / "doc.txt"
+    input_file.write_text("Hello", encoding="utf-8")
+
+    with patch("src.api.mistral_client.Path") as mock_path:
+        def path_side_effect(*args):
+            if len(args) == 1 and args[0] == "storage/translations":
+                return tmp_path
+            return Path(*args)
+        mock_path.side_effect = path_side_effect
+
+        # Attempt directory traversal in target_lang: ../../evil
+        out_file = await client.translate_file(input_file, "English", "../../evil")
+        assert out_file.exists()
+        # Verify traversal slashes/dots are sanitized and file is securely contained in translations dir
+        assert out_file.parent == tmp_path
+        assert ".." not in out_file.name
+        assert out_file.name == "doc_translated_______evil.txt"
+
+
+@pytest.mark.anyio
+async def test_translate_file_absolute_path_traversal_rejected(tmp_path):
+    client = MistralTTSClient(api_key="dummy_key")
+    input_file = tmp_path / "doc.txt"
+    input_file.write_text("Hello", encoding="utf-8")
+
+    # Providing an absolute path as output_filename should be rejected
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        await client.translate_file(input_file, "English", "Spanish", output_filename="/etc/shadow")
+
 
 
 

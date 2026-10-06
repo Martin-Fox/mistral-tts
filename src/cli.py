@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -30,21 +31,45 @@ class BooksmithCLI:
         self.api_key = api_key
         self.splitter = TextSplitter()
         self.compiler = AudioCompiler()
-        self.cache_dir = Path("storage/cache")
-        self.manifest_path = self.cache_dir / "manifest.json"
-        
-        # Ensure directories exist
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.base_cache_dir = Path("storage/cache")
+        self.base_cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_dir = self.base_cache_dir
+        self.manifest_path: Optional[Path] = None
+
+    @property
+    def cache_dir(self) -> Path:
+        return self._cache_dir
+
+    @cache_dir.setter
+    def cache_dir(self, value: Path):
+        self._cache_dir = value
+        if value.parent != self.base_cache_dir:
+            self.base_cache_dir = value
 
     def load_manifest(self) -> dict:
-        if self.manifest_path.exists():
-            with open(self.manifest_path, "r") as f:
-                return json.load(f)
+        if self.manifest_path and self.manifest_path.exists():
+            try:
+                with open(self.manifest_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
         return {"chunks": [], "completed": []}
 
     def save_manifest(self, manifest: dict):
-        with open(self.manifest_path, "w") as f:
-            json.dump(manifest, f, indent=4)
+        if not self.manifest_path:
+            return
+        temp_path = self.manifest_path.with_suffix(".tmp")
+        try:
+            with open(temp_path, "w") as f:
+                json.dump(manifest, f, indent=4)
+            temp_path.replace(self.manifest_path)
+        except Exception:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+            raise
 
     async def run(
         self,
@@ -102,8 +127,17 @@ class BooksmithCLI:
                 voice_id = voice_str if voice_provided else "en_paul_neutral"
                 client.set_voice_id(voice_id)
 
+        # Compute isolated cache key based on sha256(text + voice_str + source_lang + target_lang)
+        cache_key = hashlib.sha256(
+            f"{text}{voice_str}{source_lang or ''}{target_lang or ''}".encode("utf-8")
+        ).hexdigest()
+        self.cache_dir = self.base_cache_dir / cache_key
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.manifest_path = self.cache_dir / "manifest.json"
+
         # 4. Process chunks with progress bar
         manifest = self.load_manifest()
+        cached_chunks = list(manifest.get("chunks", []))
         manifest["chunks"] = chunks
         
         chunk_files = []
@@ -123,8 +157,13 @@ class BooksmithCLI:
                 chunk_path = self.cache_dir / chunk_filename
                 chunk_files.append(chunk_path)
 
+                chunk_matches = True
+                if cached_chunks:
+                    chunk_matches = (len(cached_chunks) > i and cached_chunks[i] == chunk)
+
                 if (
-                    chunk_filename in manifest["completed"]
+                    chunk_filename in manifest.get("completed", [])
+                    and chunk_matches
                     and chunk_path.exists()
                     and chunk_path.stat().st_size > 100
                 ):
@@ -132,6 +171,8 @@ class BooksmithCLI:
                     continue
 
                 await client.generate_audio(chunk, chunk_path)
+                if "completed" not in manifest:
+                    manifest["completed"] = []
                 manifest["completed"].append(chunk_filename)
                 self.save_manifest(manifest)
                 progress.advance(task)
