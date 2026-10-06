@@ -128,3 +128,5 @@ mistral-tts/
 - [ ] **Multi-User Login:** Support multiple user accounts and personalized histories.
 - [x] **Audio Truncation Safeguard & Duration Verification:** Enforce end-to-end duration verification and trailing silence padding.
 - [x] **Standalone Windows Portable Executable (PyInstaller + FFmpeg bundle):** Bundled Windows executable and Gitea Actions CI pipeline creating zero-setup desktop zip packages.
+- [ ] **WebUI About Modal & Current Version Display:** Add a menu item / modal for "About" that displays application metadata, current version (e.g. 1.0.2), license, and project links.
+- [ ] **WebUI Help / Quick Guide:** Interactive help or documentation drawer/modal explaining parameters (chunking, temperature, voices, engines, loudnorm) and troubleshooting tips.
