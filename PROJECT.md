@@ -8,6 +8,7 @@ Mistral-TTS-Booksmith bridges the gap between raw text / ebook files and polishe
 ## Core functionality
 - **Interactive WebUI:** A responsive single-page web interface built with FastAPI, vanilla HTML/CSS/JS, glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, session authentication, and an in-browser console terminal streaming live logs via Server-Sent Events (SSE).
 - **Interactive TUI:** A modern Terminal User Interface built with Textual for easy parameter configuration, model selection, and real-time progress monitoring.
+- **Standalone Windows Desktop Launcher:** Zero-setup portable Windows desktop distribution bundling the PyInstaller binary, web assets, and embedded FFmpeg/FFprobe binaries with automatic port binding and default browser opening.
 - **Zero-Shot Voice Cloning:** Clones voice profiles using a reference audio sample (.mp3/.wav) via Mistral's native zero-shot endpoints, with automatic afftdn audio denoising.
 - **Preset Voice Selection:** Built-in high-quality Mistral voices (`en_paul_neutral`, `fr_marie_neutral`, etc.) and OpenAI voices (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`).
 - **Dual TTS Engine Architecture:** Switch seamlessly between Mistral Voxtral (`voxtral-mini-tts-2603`) and OpenAI TTS (`tts-1`).
@@ -36,6 +37,8 @@ mistral-tts/
 │   ├── AGENTS.md              # Project-scoped AI rules & workflow
 │   └── PROJECT.md             # Project overview & architecture
 ├── PROJECT.md                 # Root project overview & architecture
+├── desktop.py                 # Root entrypoint for Desktop Launcher
+├── mistral-tts.spec           # PyInstaller multi-asset bundling specification
 ├── src/
 │   ├── api/
 │   │   ├── base_client.py     # Base abstract TTS client interface
@@ -46,6 +49,7 @@ mistral-tts/
 │   │   ├── audio_compiler.py  # FFmpeg stitching, pause injection, loudnorm, validation
 │   │   ├── config.py          # Translation model configuration and .env persistence
 │   │   ├── epub_parser.py     # Parser for EPUB, MOBI, and plain text
+│   │   ├── ffmpeg_utils.py    # Multi-tier FFmpeg/FFprobe binary resolution
 │   │   ├── task_db.py         # SQLite persistent state management
 │   │   └── text_splitter.py   # Semantic chunking logic
 │   ├── web/
@@ -54,6 +58,7 @@ mistral-tts/
 │   │       ├── index.html     # HTML structure with modern layouts
 │   │       └── styles.css     # CSS style rules with dark theme and glassmorphism
 │   ├── cli.py                 # Primary command-line interface entry point
+│   ├── desktop.py             # Desktop launcher (auto port detection, browser opener)
 │   ├── tui.py                 # Interactive Terminal UI built with Textual
 │   └── web.py                 # FastAPI backend server with background runner and SSE
 ├── storage/
@@ -63,14 +68,19 @@ mistral-tts/
 │   └── translations/          # Destination for translated source documents
 ├── tests/                     # Automated test suites for core modules & WebUI
 │   ├── test_audio_compiler.py
+│   ├── test_cli_integration.py
 │   ├── test_config.py
 │   ├── test_epub_parser.py
+│   ├── test_ffmpeg_utils.py
 │   ├── test_text_splitter.py
 │   ├── test_translation.py
 │   ├── test_tui.py
 │   └── test_web.py
 ├── .dockerignore
 ├── .env                       # (Local only) Secure API keys & config
+├── .gitea/
+│   └── workflows/
+│       └── build-windows.yml  # Gitea Actions CI workflow for Windows standalone executable
 ├── Dockerfile                 # Multi-stage container configuration
 ├── LICENSE                    # MIT License
 ├── README.md                  # Main project documentation
@@ -98,7 +108,7 @@ mistral-tts/
 
 ## Constraints
 - **API Payload Constraints:** Individual text chunks must strictly adhere to Mistral and OpenAI API character/token limits.
-- **Local System Dependencies:** Requires **FFmpeg** and **ffprobe** installed in the system PATH.
+- **Local System Dependencies:** Requires **FFmpeg** and **ffprobe** installed in the system PATH (or bundled automatically via the portable Windows release).
 - **Audio Completeness Guarantee:** Compilation must verify chunk audio integrity, pad trailing silence (1.0s default) to protect `loudnorm` filter buffers, and verify final duration against probed chunk totals within a 4.0s tolerance.
 - **SDK Compatibility:** Dependent on `mistralai` SDK version 2.4.9+ and `openai` SDK.
 
@@ -117,3 +127,4 @@ mistral-tts/
 - [ ] **OpenID Connect (OIDC) Login:** Integrate authentication based on OpenID Connect (OIDC).
 - [ ] **Multi-User Login:** Support multiple user accounts and personalized histories.
 - [x] **Audio Truncation Safeguard & Duration Verification:** Enforce end-to-end duration verification and trailing silence padding.
+- [x] **Standalone Windows Portable Executable (PyInstaller + FFmpeg bundle):** Bundled Windows executable and Gitea Actions CI pipeline creating zero-setup desktop zip packages.

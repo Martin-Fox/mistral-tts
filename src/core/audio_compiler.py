@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
+from src.core.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
+
 class AudioCompiler:
     """
     Handles stitching individual audio chunks into a single audiobook file.
@@ -38,7 +40,7 @@ class AudioCompiler:
         if not file_path.exists():
             raise FileNotFoundError(f"Audio file not found for duration probing: {file_path}")
         cmd = [
-            "ffmpeg", "-nostats", "-v", "info",
+            get_ffmpeg_path(), "-nostats", "-v", "info",
             "-i", str(file_path),
             "-f", "null", "-"
         ]
@@ -66,7 +68,7 @@ class AudioCompiler:
         import json
         try:
             cmd = [
-                "ffprobe", "-v", "error", 
+                get_ffprobe_path(), "-v", "error", 
                 "-show_entries", "stream=sample_rate,channels", 
                 "-of", "json", str(file_path)
             ]
@@ -95,7 +97,7 @@ class AudioCompiler:
             duration_s = self.pause_duration_s
         channel_layout = "mono" if channels == 1 else "stereo"
         cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", 
+            get_ffmpeg_path(), "-y", "-f", "lavfi", 
             "-i", f"anullsrc=r={sample_rate}:cl={channel_layout}",
             "-t", str(duration_s), "-q:a", "9", str(output_path)
         ]
@@ -169,7 +171,7 @@ class AudioCompiler:
                     f.write(f"file '{trailing_silence_file.absolute()}'\n")
 
             cmd = [
-                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                get_ffmpeg_path(), "-y", "-f", "concat", "-safe", "0",
                 "-i", str(concat_file), "-af", "loudnorm", str(output_path)
             ]
             subprocess.run(cmd, check=True, capture_output=True)

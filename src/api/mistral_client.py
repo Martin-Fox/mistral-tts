@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from mistralai.client import Mistral
 from src.api.base_client import BaseTTSClient
 from src.core.config import get_translation_model
+from src.core.ffmpeg_utils import get_ffmpeg_path
 
 load_dotenv()
 
@@ -92,7 +93,7 @@ class MistralTTSClient(BaseTTSClient):
         # Denoise the voice sample using FFmpeg's afftdn filter
         temp_denoised = audio_path.with_suffix(audio_path.suffix + ".denoised")
         try:
-            cmd = ["ffmpeg", "-y", "-i", str(audio_path), "-af", "afftdn", str(temp_denoised)]
+            cmd = [get_ffmpeg_path(), "-y", "-i", str(audio_path), "-af", "afftdn", str(temp_denoised)]
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
