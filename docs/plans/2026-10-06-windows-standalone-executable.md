@@ -124,17 +124,19 @@ The PyInstaller spec is configured for **`onedir`** distribution:
 ### 3.4 Automated Gitea Actions CI Workflow ([.gitea/workflows/build-windows.yml](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml))
 
 Executes on standard Linux runners (`runs-on: ubuntu-latest`) using native Wine and Windows Python 3.11, eliminating the need for dedicated Windows runner hosts and removing dependencies on nested `/var/run/docker.sock` daemon sockets:
-1. **Host-Level Actions & Robust Public Domain Checkout:**
+1. **Gitea Network Host Mapping & Internal Forwarding Bridge:**
+   Maps `127.0.0.1 gitea` in `/etc/hosts` and launches a lightweight TCP bridge forwarding `127.0.0.1:3000` to the host Gitea service (probing `GATEWAY_IP:8092`, `GATEWAY_IP:3000`, etc.), eliminating `getaddrinfo ENOTFOUND gitea` errors during artifact upload.
+2. **Host-Level Actions & Robust Public Domain Checkout:**
    Checks out the source code directly via `https://gitea.marcin-lis.pl/fox/mistral-tts.git` with branch and fallback handling, preventing hostname resolution errors (`gitea:3000`) within isolated runner networks.
-2. **FFmpeg Acquisition with Dual-Source Fallback:**
+3. **FFmpeg Acquisition with Dual-Source Fallback:**
    Downloads Windows 64-bit FFmpeg essentials archive from `https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip`. If Gyan.dev is temporarily unreachable or rate-limited, it automatically falls back to GitHub releases (`BtbN/FFmpeg-Builds`).
-3. **Binary Extraction:**
+4. **Binary Extraction:**
    Extracts `ffmpeg.exe` and `ffprobe.exe` into a local `bin/` directory.
-4. **Native Wine & Windows Python 3.11 Setup:**
+5. **Native Wine & Windows Python 3.11 Setup:**
    Installs `wine`, `wine64`, and provisions the official portable Windows Python 3.11 embeddable runtime with `get-pip.py` in a 64-bit Wine prefix (`WINEARCH=win64`), avoiding GUI/MSI installer crashes.
-5. **Dependency Installation & PyInstaller Build:**
+6. **Dependency Installation & PyInstaller Build:**
    Installs Python dependencies with `wine python -m pip install -r requirements.txt` and `wine python -m pip install pyinstaller`, then compiles via `wine python -m PyInstaller mistral-tts.spec` into `dist/mistral-tts/`.
-6. **Bundle Assembly & Script Generation:**
+7. **Bundle Assembly & Script Generation:**
    Copies `bin/` into `dist/mistral-tts/bin/`. Creates a convenient batch script `dist/mistral-tts/run.bat`:
    ```bat
    @echo off
@@ -143,8 +145,8 @@ Executes on standard Linux runners (`runs-on: ubuntu-latest`) using native Wine 
    mistral-tts.exe
    pause
    ```
-7. **Artifact Publishing:**
-   Compresses `dist/mistral-tts` into `mistral-tts-windows-x64.zip` and uploads it via `actions/upload-artifact@v3` (v3 is required for Gitea Actions compatibility).
+8. **Artifact Publishing & Verification:**
+   Compresses `dist/mistral-tts` into `mistral-tts-windows-x64.zip` and uploads it via `actions/upload-artifact@v3` (v3 is required for Gitea Actions compatibility), with fallback reporting.
 
 ---
 

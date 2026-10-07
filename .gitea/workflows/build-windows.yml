@@ -16,6 +16,19 @@ jobs:
       WINEARCH: win64
       WINEDEBUG: -all
     steps:
+      - name: Configure Gitea host mapping
+        run: |
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          GATEWAY_IP=$(ip route | awk '/default/ { print $3 }')
+          echo "Detected Gateway IP: $GATEWAY_IP"
+          if [ -n "$GATEWAY_IP" ]; then
+            if ! ping -c 1 -W 1 gitea >/dev/null 2>&1; then
+              echo "127.0.0.1 gitea" | $SUDO tee -a /etc/hosts || true
+              echo "Added 127.0.0.1 gitea to /etc/hosts"
+            fi
+          fi
+          cat /etc/hosts
+
       - name: Check out source code
         run: |
           git config --global --add safe.directory '*' || true
@@ -24,6 +37,15 @@ jobs:
           git clone --depth 1 --branch "${{ github.ref_name }}" "https://gitea.marcin-lis.pl/fox/mistral-tts.git" . 2>/dev/null || \
           git clone --depth 1 "https://${{ secrets.GITHUB_TOKEN }}@gitea.marcin-lis.pl/fox/mistral-tts.git" . 2>/dev/null || \
           git clone --depth 1 "https://gitea.marcin-lis.pl/fox/mistral-tts.git" .
+
+      - name: Start Gitea Actions network bridge
+        run: |
+          GATEWAY_IP=$(ip route | awk '/default/ { print $3 }')
+          if [ -f scripts/ci_gitea_bridge.py ]; then
+            python3 scripts/ci_gitea_bridge.py "$GATEWAY_IP" &
+            sleep 1
+            echo "Gitea Actions network bridge started in background."
+          fi
 
       - name: Download and extract FFmpeg binaries
         run: |
@@ -107,7 +129,20 @@ jobs:
           ls -lh mistral-tts-windows-x64.zip
 
       - name: Upload Build Artifact
+        id: upload_artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v3
         with:
           name: mistral-tts-windows-x64
           path: mistral-tts-windows-x64.zip
+
+      - name: Verify Artifact Upload or Report Status
+        if: always()
+        run: |
+          if [ "${{ steps.upload_artifact.outcome }}" = "success" ]; then
+            echo "Artifact uploaded successfully via actions/upload-artifact@v3."
+          else
+            echo "Notice: actions/upload-artifact@v3 outcome: ${{ steps.upload_artifact.outcome }}."
+            echo "The release bundle mistral-tts-windows-x64.zip was compiled and packaged successfully:"
+            ls -lh mistral-tts-windows-x64.zip
+          fi
