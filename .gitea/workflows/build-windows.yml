@@ -19,15 +19,20 @@ jobs:
       - name: Configure Gitea host mapping
         run: |
           if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
-          GATEWAY_IP=$(ip route | awk '/default/ { print $3 }')
-          echo "Detected Gateway IP: $GATEWAY_IP"
-          if [ -n "$GATEWAY_IP" ]; then
-            if ! ping -c 1 -W 1 gitea >/dev/null 2>&1; then
-              echo "127.0.0.1 gitea" | $SUDO tee -a /etc/hosts || true
-              echo "Added 127.0.0.1 gitea to /etc/hosts"
-            fi
+          GATEWAY_IP=""
+          if command -v ip >/dev/null 2>&1; then
+            GATEWAY_IP=$(ip route 2>/dev/null | awk '/default/ { print $3 }' || true)
+          elif command -v route >/dev/null 2>&1; then
+            GATEWAY_IP=$(route -n 2>/dev/null | awk '/^0.0.0.0/ { print $2 }' || true)
+          elif [ -f /proc/net/route ]; then
+            GATEWAY_IP=$(awk '$2 == "00000000" && $3 != "00000000" { printf "%d.%d.%d.%d\n", "0x"substr($3, 7, 2), "0x"substr($3, 5, 2), "0x"substr($3, 3, 2), "0x"substr($3, 1, 2); exit }' /proc/net/route 2>/dev/null || awk '$2 == "00000000" { split($3, a, /(..)/); printf "%d.%d.%d.%d\n", "0x"a[4], "0x"a[3], "0x"a[2], "0x"a[1] }' /proc/net/route 2>/dev/null || true)
           fi
-          cat /etc/hosts
+          echo "Detected Gateway IP: ${GATEWAY_IP:-none}"
+          if ! ping -c 1 -W 1 gitea >/dev/null 2>&1; then
+            echo "127.0.0.1 gitea" | $SUDO tee -a /etc/hosts >/dev/null 2>&1 || echo "127.0.0.1 gitea" >> /etc/hosts 2>/dev/null || true
+            echo "Added 127.0.0.1 gitea to /etc/hosts"
+          fi
+          cat /etc/hosts || true
 
       - name: Check out source code
         run: |
@@ -40,9 +45,16 @@ jobs:
 
       - name: Start Gitea Actions network bridge
         run: |
-          GATEWAY_IP=$(ip route | awk '/default/ { print $3 }')
+          GATEWAY_IP=""
+          if command -v ip >/dev/null 2>&1; then
+            GATEWAY_IP=$(ip route 2>/dev/null | awk '/default/ { print $3 }' || true)
+          elif command -v route >/dev/null 2>&1; then
+            GATEWAY_IP=$(route -n 2>/dev/null | awk '/^0.0.0.0/ { print $2 }' || true)
+          elif [ -f /proc/net/route ]; then
+            GATEWAY_IP=$(awk '$2 == "00000000" && $3 != "00000000" { printf "%d.%d.%d.%d\n", "0x"substr($3, 7, 2), "0x"substr($3, 5, 2), "0x"substr($3, 3, 2), "0x"substr($3, 1, 2); exit }' /proc/net/route 2>/dev/null || awk '$2 == "00000000" { split($3, a, /(..)/); printf "%d.%d.%d.%d\n", "0x"a[4], "0x"a[3], "0x"a[2], "0x"a[1] }' /proc/net/route 2>/dev/null || true)
+          fi
           if [ -f scripts/ci_gitea_bridge.py ]; then
-            python3 scripts/ci_gitea_bridge.py "$GATEWAY_IP" &
+            python3 scripts/ci_gitea_bridge.py ${GATEWAY_IP:+"$GATEWAY_IP"} &
             sleep 1
             echo "Gitea Actions network bridge started in background."
           fi
