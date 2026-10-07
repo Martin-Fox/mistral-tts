@@ -11,63 +11,55 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    container: tobix/pywine:3.11
+    env:
+      WINEDEBUG: -all
     steps:
       - name: Check out source code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
       - name: Download and extract FFmpeg binaries
-        shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path bin
-          $ffmpegZip = "ffmpeg.zip"
-          try {
-              Write-Host "Downloading FFmpeg from Gyan.dev..."
-              Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $ffmpegZip -TimeoutSec 120
-          } catch {
-              Write-Host "Fallback: Downloading FFmpeg from GitHub releases..."
-              Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile $ffmpegZip -TimeoutSec 120
-          }
-          Write-Host "Extracting FFmpeg archive..."
-          Expand-Archive -Path $ffmpegZip -DestinationPath ffmpeg-extract -Force
-          $ffmpegExe = Get-ChildItem -Path ffmpeg-extract -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-          $ffprobeExe = Get-ChildItem -Path ffmpeg-extract -Recurse -Filter "ffprobe.exe" | Select-Object -First 1
-          Copy-Item $ffmpegExe.FullName -Destination bin\ffmpeg.exe -Force
-          Copy-Item $ffprobeExe.FullName -Destination bin\ffprobe.exe -Force
-          Remove-Item -Recurse -Force ffmpeg-extract, $ffmpegZip
-          Write-Host "Binaries placed in bin/:"
-          Get-ChildItem bin\
+          mkdir -p bin
+          if ! command -v unzip >/dev/null 2>&1 || ! command -v zip >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            apt-get update && apt-get install -y --no-install-recommends curl unzip zip
+          fi
+          echo "Downloading FFmpeg for Windows..."
+          curl -L --retry 3 -o ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" || \
+          curl -L --retry 3 -o ffmpeg.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          echo "Extracting FFmpeg binaries..."
+          unzip -q -o ffmpeg.zip
+          find . -name "ffmpeg.exe" -exec cp {} bin/ \;
+          find . -name "ffprobe.exe" -exec cp {} bin/ \;
+          rm -rf ffmpeg-*-* ffmpeg.zip
+          echo "Binaries placed in bin/:"
+          ls -la bin/
 
-      - name: Build Standalone Executable
+      - name: Install dependencies via Wine
         run: |
-          pyinstaller mistral-tts.spec
+          wine pip install --upgrade pip
+          wine pip install -r requirements.txt
+          wine pip install pyinstaller
+
+      - name: Build Standalone Executable with PyInstaller via Wine
+        run: |
+          wine pyinstaller mistral-tts.spec
 
       - name: Package Release Bundle
-        shell: powershell
         run: |
-          # Ensure bin folder with ffmpeg/ffprobe is inside dist\mistral-tts
-          New-Item -ItemType Directory -Force -Path dist\mistral-tts\bin
-          Copy-Item -Path bin\* -Destination dist\mistral-tts\bin\ -Force
+          mkdir -p dist/mistral-tts/bin
+          cp -f bin/ffmpeg.exe dist/mistral-tts/bin/
+          cp -f bin/ffprobe.exe dist/mistral-tts/bin/
 
-          # Create run.bat helper launcher
-          $batContent = "@echo off`r`ncd /d ""%~dp0""`r`necho Starting Mistral-TTS-Booksmith...`r`nmistral-tts.exe`r`npause`r`n"
-          [System.IO.File]::WriteAllText("dist\mistral-tts\run.bat", $batContent, [System.Text.Encoding]::ASCII)
+          # Create run.bat helper launcher with CRLF line endings
+          printf '@echo off\r\ncd /d "%%~dp0"\r\necho Starting Mistral-TTS-Booksmith...\r\nmistral-tts.exe\r\npause\r\n' > dist/mistral-tts/run.bat
 
-          # Compress to zip
-          Compress-Archive -Path dist\mistral-tts\* -DestinationPath mistral-tts-windows-x64.zip -Force
-          Write-Host "Archive generated successfully: mistral-tts-windows-x64.zip"
+          cd dist
+          zip -r ../mistral-tts-windows-x64.zip mistral-tts/
+          cd ..
+          echo "Archive generated successfully: mistral-tts-windows-x64.zip"
+          ls -lh mistral-tts-windows-x64.zip
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
