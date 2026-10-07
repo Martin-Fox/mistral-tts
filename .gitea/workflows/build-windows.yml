@@ -12,9 +12,6 @@ on:
 jobs:
   build-windows:
     runs-on: ubuntu-latest
-    container: tobix/pywine:3.11
-    env:
-      WINEDEBUG: -all
     steps:
       - name: Check out source code
         uses: actions/checkout@v4
@@ -23,7 +20,7 @@ jobs:
         run: |
           mkdir -p bin
           if ! command -v unzip >/dev/null 2>&1 || ! command -v zip >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
-            apt-get update && apt-get install -y --no-install-recommends curl unzip zip
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends curl unzip zip
           fi
           echo "Downloading FFmpeg for Windows..."
           curl -L --retry 3 -o ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" || \
@@ -36,15 +33,14 @@ jobs:
           echo "Binaries placed in bin/:"
           ls -la bin/
 
-      - name: Install dependencies via Wine
+      - name: Build Windows Executable via PyWine Container
         run: |
-          wine pip install --upgrade pip
-          wine pip install -r requirements.txt
-          wine pip install pyinstaller
-
-      - name: Build Standalone Executable with PyInstaller via Wine
-        run: |
-          wine pyinstaller mistral-tts.spec
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e WINEDEBUG=-all \
+            tobix/pywine:3.11 \
+            sh -c "wine pip install --upgrade pip && wine pip install -r requirements.txt && wine pip install pyinstaller && wine pyinstaller mistral-tts.spec"
 
       - name: Package Release Bundle
         run: |

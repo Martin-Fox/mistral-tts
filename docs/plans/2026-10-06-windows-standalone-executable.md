@@ -38,13 +38,13 @@ We implement a four-pillar desktop packaging and binary resolution architecture:
 
 ```mermaid
 flowchart TD
-    subgraph CI Build Stage [Gitea Actions Linux Runner with Wine]
-        Checkout["Check out source code"] --> Container["Container: tobix/pywine:3.11"]
-        Container --> DownloadFFmpeg["Download Windows FFmpeg / FFprobe Binaries<br>(Gyan.dev with BtbN fallback)"]
-        DownloadFFmpeg --> WinePip["Install dependencies via wine pip"]
-        WinePip --> PyInstaller["PyInstaller Build via Wine (mistral-tts.spec)"]
+    subgraph CI Build Stage [Gitea Actions Linux Host Runner]
+        Checkout["Check out source code (actions/checkout)"] --> DownloadFFmpeg["Download Windows FFmpeg / FFprobe Binaries<br>(Gyan.dev with BtbN fallback)"]
+        DownloadFFmpeg --> DockerWine["docker run --rm tobix/pywine:3.11"]
+        DockerWine --> WinePip["wine pip install -r requirements.txt"]
+        WinePip --> PyInstaller["wine pyinstaller mistral-tts.spec"]
         PyInstaller --> PackageZip["Package dist/mistral-tts + bin/ + run.bat<br>-> mistral-tts-windows-x64.zip"]
-        PackageZip --> UploadArtifact["Upload Artifact / Release Asset"]
+        PackageZip --> UploadArtifact["Upload Artifact (actions/upload-artifact)"]
     end
 
     subgraph Runtime Launch [User Windows Machine]
@@ -123,15 +123,15 @@ The PyInstaller spec is configured for **`onedir`** distribution:
 
 ### 3.4 Automated Gitea Actions CI Workflow ([.gitea/workflows/build-windows.yml](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml))
 
-Executes on standard Linux Docker runners (`runs-on: ubuntu-latest`) using the containerized Wine environment `tobix/pywine:3.11`, eliminating the need for dedicated Windows runner hosts:
-1. **Containerized Linux Environment:**
-   Uses `container: tobix/pywine:3.11` on `ubuntu-latest`, providing a pre-configured Wine prefix with Windows Python 3.11.
+Executes on standard Linux Docker runners (`runs-on: ubuntu-latest`) using `docker run tobix/pywine:3.11` for the Wine compilation step, eliminating the need for dedicated Windows runner hosts while avoiding container-level Node.js requirements in Gitea's `act_runner`:
+1. **Host-Level Actions & Checkout:**
+   Runs `actions/checkout@v4` directly on the host runner with native Node.js.
 2. **FFmpeg Acquisition with Dual-Source Fallback:**
    Downloads Windows 64-bit FFmpeg essentials archive from `https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip`. If Gyan.dev is temporarily unreachable or rate-limited, it automatically falls back to GitHub releases (`BtbN/FFmpeg-Builds`).
 3. **Binary Extraction:**
    Extracts `ffmpeg.exe` and `ffprobe.exe` into a local `bin/` directory.
-4. **Dependency Installation & Compilation via Wine:**
-   Installs Python dependencies with `wine pip install -r requirements.txt` and `wine pip install pyinstaller`, then compiles via `wine pyinstaller mistral-tts.spec` into `dist/mistral-tts/`.
+4. **Isolated PyWine Compilation via Docker:**
+   Invokes `docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace -e WINEDEBUG=-all tobix/pywine:3.11` to install Windows dependencies and run `wine pyinstaller mistral-tts.spec` into `dist/mistral-tts/`.
 5. **Bundle Assembly & Script Generation:**
    Copies `bin/` into `dist/mistral-tts/bin/`. Creates a convenient batch script `dist/mistral-tts/run.bat`:
    ```bat
