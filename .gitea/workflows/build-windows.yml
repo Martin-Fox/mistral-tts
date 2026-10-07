@@ -58,25 +58,38 @@ jobs:
           wineboot --init
           wineserver -w || true
 
-          echo "Downloading Windows Python 3.11 installer..."
-          curl -sSL -o python-installer.exe "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
-          echo "Installing Windows Python in Wine..."
-          wine python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
-          rm -f python-installer.exe
+          echo "Setting up portable Windows Python 3.11 in Wine..."
+          WINE_DRIVE_C="${WINEPREFIX:-$HOME/.wine}/drive_c"
+          PYTHON_DIR="$WINE_DRIVE_C/Python311"
+          mkdir -p "$PYTHON_DIR"
+          curl -sSL -o python-embed.zip "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
+          unzip -q python-embed.zip -d "$PYTHON_DIR"
+          rm -f python-embed.zip
+
+          # Enable site-packages in python311._pth
+          sed -i 's/^#import site/import site/' "$PYTHON_DIR/python311._pth"
+
+          # Install pip
+          curl -sSL -o get-pip.py "https://bootstrap.pypa.io/get-pip.py"
+          wine "C:\\Python311\\python.exe" get-pip.py --no-warn-script-location
+          rm -f get-pip.py
+
+          # Add Python to Wine system PATH in registry
+          wine reg add "HKCU\\Environment" /v PATH /t REG_EXPAND_SZ /d "C:\\Python311;C:\\Python311\\Scripts;%PATH%" /f
           wineserver -w || true
 
-          echo "Verifying Wine Python installation..."
-          wine python --version
+          echo "Verifying Wine Python..."
+          wine "C:\\Python311\\python.exe" --version
+          wine "C:\\Python311\\python.exe" -m pip --version
 
       - name: Install Dependencies and PyInstaller inside Wine
         run: |
-          wine python -m pip install --upgrade pip
-          wine python -m pip install -r requirements.txt
-          wine python -m pip install pyinstaller
+          wine "C:\\Python311\\python.exe" -m pip install --upgrade pip
+          wine "C:\\Python311\\python.exe" -m pip install -r requirements.txt pyinstaller
 
       - name: Build Windows Executable with PyInstaller
         run: |
-          wine python -m PyInstaller mistral-tts.spec || wine pyinstaller mistral-tts.spec
+          wine "C:\\Python311\\python.exe" -m PyInstaller mistral-tts.spec
 
       - name: Package Release Bundle
         run: |

@@ -131,7 +131,7 @@ Executes on standard Linux runners (`runs-on: ubuntu-latest`) using native Wine 
 3. **Binary Extraction:**
    Extracts `ffmpeg.exe` and `ffprobe.exe` into a local `bin/` directory.
 4. **Native Wine & Windows Python 3.11 Setup:**
-   Installs `wine`, `wine64`, and downloads/executes the official Windows Python 3.11 silent installer in a 64-bit Wine prefix (`WINEARCH=win64`).
+   Installs `wine`, `wine64`, and provisions the official portable Windows Python 3.11 embeddable runtime with `get-pip.py` in a 64-bit Wine prefix (`WINEARCH=win64`), avoiding GUI/MSI installer crashes.
 5. **Dependency Installation & PyInstaller Build:**
    Installs Python dependencies with `wine python -m pip install -r requirements.txt` and `wine python -m pip install pyinstaller`, then compiles via `wine python -m PyInstaller mistral-tts.spec` into `dist/mistral-tts/`.
 6. **Bundle Assembly & Script Generation:**
