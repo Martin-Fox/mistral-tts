@@ -54,8 +54,9 @@ jobs:
             GATEWAY_IP=$(awk '$2 == "00000000" && $3 != "00000000" { printf "%d.%d.%d.%d\n", "0x"substr($3, 7, 2), "0x"substr($3, 5, 2), "0x"substr($3, 3, 2), "0x"substr($3, 1, 2); exit }' /proc/net/route 2>/dev/null || awk '$2 == "00000000" { split($3, a, /(..)/); printf "%d.%d.%d.%d\n", "0x"a[4], "0x"a[3], "0x"a[2], "0x"a[1] }' /proc/net/route 2>/dev/null || true)
           fi
           if [ -f scripts/ci_gitea_bridge.py ]; then
-            python3 scripts/ci_gitea_bridge.py ${GATEWAY_IP:+"$GATEWAY_IP"} &
+            nohup python3 scripts/ci_gitea_bridge.py ${GATEWAY_IP:+"$GATEWAY_IP"} > bridge.log 2>&1 &
             sleep 1
+            ps aux | grep ci_gitea_bridge || true
             echo "Gitea Actions network bridge started in background."
           fi
 
@@ -139,6 +140,31 @@ jobs:
           cd ..
           echo "Archive generated successfully: mistral-tts-windows-x64.zip"
           ls -lh mistral-tts-windows-x64.zip
+
+      - name: Publish Windows Bundle to Gitea Releases
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          python3 scripts/ci_publish_release.py mistral-tts-windows-x64.zip
+
+      - name: Ensure Gitea Actions network bridge is running
+        run: |
+          if ! pgrep -f "ci_gitea_bridge.py" >/dev/null 2>&1; then
+            echo "Bridge not found running; starting background bridge..."
+            GATEWAY_IP=""
+            if command -v ip >/dev/null 2>&1; then
+              GATEWAY_IP=$(ip route 2>/dev/null | awk '/default/ { print $3 }' || true)
+            elif command -v route >/dev/null 2>&1; then
+              GATEWAY_IP=$(route -n 2>/dev/null | awk '/^0.0.0.0/ { print $2 }' || true)
+            elif [ -f /proc/net/route ]; then
+              GATEWAY_IP=$(awk '$2 == "00000000" && $3 != "00000000" { printf "%d.%d.%d.%d\n", "0x"substr($3, 7, 2), "0x"substr($3, 5, 2), "0x"substr($3, 3, 2), "0x"substr($3, 1, 2); exit }' /proc/net/route 2>/dev/null || awk '$2 == "00000000" { split($3, a, /(..)/); printf "%d.%d.%d.%d\n", "0x"a[4], "0x"a[3], "0x"a[2], "0x"a[1] }' /proc/net/route 2>/dev/null || true)
+            fi
+            nohup python3 scripts/ci_gitea_bridge.py ${GATEWAY_IP:+"$GATEWAY_IP"} > bridge.log 2>&1 &
+            sleep 1
+          fi
+          ps aux | grep ci_gitea_bridge || true
 
       - name: Upload Build Artifact
         id: upload_artifact

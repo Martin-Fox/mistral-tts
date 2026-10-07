@@ -7,11 +7,18 @@ Resolves and forwards http://gitea:3000 to the host Gitea instance
 
 import os
 import select
+import signal
 import socket
 import struct
 import sys
 import threading
 import time
+
+if hasattr(signal, "SIGHUP"):
+    try:
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    except Exception:
+        pass
 
 
 def get_default_gateway_from_proc(proc_route_path: str = "/proc/net/route") -> str | None:
