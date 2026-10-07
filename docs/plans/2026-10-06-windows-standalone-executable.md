@@ -144,7 +144,7 @@ Executes on standard Linux runners (`runs-on: ubuntu-latest`) using native Wine 
    pause
    ```
 7. **Artifact Publishing:**
-   Compresses `dist/mistral-tts` into `mistral-tts-windows-x64.zip` and uploads it via `actions/upload-artifact@v4`.
+   Compresses `dist/mistral-tts` into `mistral-tts-windows-x64.zip` and uploads it via `actions/upload-artifact@v3` (v3 is required for Gitea Actions compatibility).
 
 ---
 

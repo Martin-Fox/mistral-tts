@@ -107,8 +107,7 @@ jobs:
           ls -lh mistral-tts-windows-x64.zip
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: mistral-tts-windows-x64
           path: mistral-tts-windows-x64.zip
-          if-no-files-found: error
