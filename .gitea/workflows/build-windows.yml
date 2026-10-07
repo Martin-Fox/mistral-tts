@@ -14,7 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source code
-        uses: actions/checkout@v4
+        run: |
+          git config --global --add safe.directory '*' || true
+          echo "Checking out repository from https://gitea.marcin-lis.pl/fox/mistral-tts.git..."
+          git clone --depth 1 --branch "${{ github.ref_name }}" "https://${{ secrets.GITHUB_TOKEN }}@gitea.marcin-lis.pl/fox/mistral-tts.git" . 2>/dev/null || \
+          git clone --depth 1 --branch "${{ github.ref_name }}" "https://gitea.marcin-lis.pl/fox/mistral-tts.git" . 2>/dev/null || \
+          git clone --depth 1 "https://${{ secrets.GITHUB_TOKEN }}@gitea.marcin-lis.pl/fox/mistral-tts.git" . 2>/dev/null || \
+          git clone --depth 1 "https://gitea.marcin-lis.pl/fox/mistral-tts.git" .
 
       - name: Download and extract FFmpeg binaries
         run: |

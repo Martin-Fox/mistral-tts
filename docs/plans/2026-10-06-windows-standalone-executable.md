@@ -124,8 +124,8 @@ The PyInstaller spec is configured for **`onedir`** distribution:
 ### 3.4 Automated Gitea Actions CI Workflow ([.gitea/workflows/build-windows.yml](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml))
 
 Executes on standard Linux Docker runners (`runs-on: ubuntu-latest`) using `docker run tobix/pywine:3.11` for the Wine compilation step, eliminating the need for dedicated Windows runner hosts while avoiding container-level Node.js requirements in Gitea's `act_runner`:
-1. **Host-Level Actions & Checkout:**
-   Runs `actions/checkout@v4` directly on the host runner with native Node.js.
+1. **Host-Level Actions & Robust Public Domain Checkout:**
+   Checks out the source code directly via `https://gitea.marcin-lis.pl/fox/mistral-tts.git` with branch and fallback handling, preventing hostname resolution errors (`gitea:3000`) within isolated runner networks.
 2. **FFmpeg Acquisition with Dual-Source Fallback:**
    Downloads Windows 64-bit FFmpeg essentials archive from `https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip`. If Gyan.dev is temporarily unreachable or rate-limited, it automatically falls back to GitHub releases (`BtbN/FFmpeg-Builds`).
 3. **Binary Extraction:**
