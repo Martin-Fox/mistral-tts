@@ -34,15 +34,15 @@ We implement a four-pillar desktop packaging and binary resolution architecture:
 3. **PyInstaller Multi-Asset Bundling Specification (`mistral-tts.spec`):**
    Configures `onedir` packaging bundling static HTML/CSS/JS assets, core Python modules, external dependency submodules, and optional bundled binaries.
 4. **Gitea Actions Automated Build Pipeline (`.gitea/workflows/build-windows.yml`):**
-   Automates building Windows executables on standard Linux Docker runners (`runs-on: ubuntu-latest`) via the `tobix/pywine:3.11` container, downloading pre-built FFmpeg binaries (with dual-source Gyan.dev/BtbN fallback), running PyInstaller compilation via Wine, bundling helper scripts (`run.bat`), and publishing `mistral-tts-windows-x64.zip` build artifacts.
+   Automates building Windows executables on standard Linux runners (`runs-on: ubuntu-latest`) by directly installing Wine and Windows Python 3.11 (without requiring nested Docker daemon sockets), downloading pre-built FFmpeg binaries (with dual-source Gyan.dev/BtbN fallback), running PyInstaller compilation via Wine, bundling helper scripts (`run.bat`), and publishing `mistral-tts-windows-x64.zip` build artifacts.
 
 ```mermaid
 flowchart TD
     subgraph CI Build Stage [Gitea Actions Linux Host Runner]
-        Checkout["Check out source code (actions/checkout)"] --> DownloadFFmpeg["Download Windows FFmpeg / FFprobe Binaries<br>(Gyan.dev with BtbN fallback)"]
-        DownloadFFmpeg --> DockerWine["docker run --rm tobix/pywine:3.11"]
-        DockerWine --> WinePip["wine pip install -r requirements.txt"]
-        WinePip --> PyInstaller["wine pyinstaller mistral-tts.spec"]
+        Checkout["Check out source code (public endpoint)"] --> DownloadFFmpeg["Download Windows FFmpeg / FFprobe Binaries<br>(Gyan.dev with BtbN fallback)"]
+        DownloadFFmpeg --> InstallWine["Install Wine & Windows Python 3.11"]
+        InstallWine --> WinePip["wine python -m pip install -r requirements.txt"]
+        WinePip --> PyInstaller["wine python -m PyInstaller mistral-tts.spec"]
         PyInstaller --> PackageZip["Package dist/mistral-tts + bin/ + run.bat<br>-> mistral-tts-windows-x64.zip"]
         PackageZip --> UploadArtifact["Upload Artifact (actions/upload-artifact)"]
     end
@@ -123,16 +123,18 @@ The PyInstaller spec is configured for **`onedir`** distribution:
 
 ### 3.4 Automated Gitea Actions CI Workflow ([.gitea/workflows/build-windows.yml](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml))
 
-Executes on standard Linux Docker runners (`runs-on: ubuntu-latest`) using `docker run tobix/pywine:3.11` for the Wine compilation step, eliminating the need for dedicated Windows runner hosts while avoiding container-level Node.js requirements in Gitea's `act_runner`:
+Executes on standard Linux runners (`runs-on: ubuntu-latest`) using native Wine and Windows Python 3.11, eliminating the need for dedicated Windows runner hosts and removing dependencies on nested `/var/run/docker.sock` daemon sockets:
 1. **Host-Level Actions & Robust Public Domain Checkout:**
    Checks out the source code directly via `https://gitea.marcin-lis.pl/fox/mistral-tts.git` with branch and fallback handling, preventing hostname resolution errors (`gitea:3000`) within isolated runner networks.
 2. **FFmpeg Acquisition with Dual-Source Fallback:**
    Downloads Windows 64-bit FFmpeg essentials archive from `https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip`. If Gyan.dev is temporarily unreachable or rate-limited, it automatically falls back to GitHub releases (`BtbN/FFmpeg-Builds`).
 3. **Binary Extraction:**
    Extracts `ffmpeg.exe` and `ffprobe.exe` into a local `bin/` directory.
-4. **Isolated PyWine Compilation via Docker:**
-   Invokes `docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace -e WINEDEBUG=-all tobix/pywine:3.11` to install Windows dependencies and run `wine pyinstaller mistral-tts.spec` into `dist/mistral-tts/`.
-5. **Bundle Assembly & Script Generation:**
+4. **Native Wine & Windows Python 3.11 Setup:**
+   Installs `wine`, `wine64`, and downloads/executes the official Windows Python 3.11 silent installer in a 64-bit Wine prefix (`WINEARCH=win64`).
+5. **Dependency Installation & PyInstaller Build:**
+   Installs Python dependencies with `wine python -m pip install -r requirements.txt` and `wine python -m pip install pyinstaller`, then compiles via `wine python -m PyInstaller mistral-tts.spec` into `dist/mistral-tts/`.
+6. **Bundle Assembly & Script Generation:**
    Copies `bin/` into `dist/mistral-tts/bin/`. Creates a convenient batch script `dist/mistral-tts/run.bat`:
    ```bat
    @echo off
@@ -141,7 +143,7 @@ Executes on standard Linux Docker runners (`runs-on: ubuntu-latest`) using `dock
    mistral-tts.exe
    pause
    ```
-6. **Artifact Publishing:**
+7. **Artifact Publishing:**
    Compresses `dist/mistral-tts` into `mistral-tts-windows-x64.zip` and uploads it via `actions/upload-artifact@v4`.
 
 ---
@@ -210,10 +212,10 @@ All automated tests in `tests/test_ffmpeg_utils.py` and the complete test suite 
 - **Standalone Windows Executable:** Added zero-setup desktop distribution for Windows x64 (`mistral-tts-windows-x64.zip`) bundling PyInstaller binary, web assets, and pre-compiled FFmpeg/FFprobe binaries.
 - **Dynamic Binary Resolution:** Implemented [`src/core/ffmpeg_utils.py`](file:///home/fox/repos/mistral-tts/src/core/ffmpeg_utils.py) with a 4-tier resolution hierarchy (`_MEIPASS`, `sys.executable`, repository root, system `PATH`) with `.exe` precedence on Windows and directory collision protection. Integrated into `AudioCompiler` and `MistralTTSClient`.
 - **Desktop Launcher:** Created [`src/desktop.py`](file:///home/fox/repos/mistral-tts/src/desktop.py) and [`desktop.py`](file:///home/fox/repos/mistral-tts/desktop.py) with collision-free port negotiation (from 8000), background browser opening, working directory anchoring, and CLI argument support.
-- **Packaging & CI Pipeline:** Added [`mistral-tts.spec`](file:///home/fox/repos/mistral-tts/mistral-tts.spec) for `onedir` packaging and [`.gitea/workflows/build-windows.yml`](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml) for automated Gitea Actions builds on Linux runners using `tobix/pywine:3.11`, with dual-source FFmpeg acquisition, `run.bat` generation, and zip artifact publishing.
+- **Packaging & CI Pipeline:** Added [`mistral-tts.spec`](file:///home/fox/repos/mistral-tts/mistral-tts.spec) for `onedir` packaging and [`.gitea/workflows/build-windows.yml`](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml) for automated Gitea Actions builds on Linux runners using native Wine and Windows Python 3.11, with dual-source FFmpeg acquisition, `run.bat` generation, and zip artifact publishing.
 
 ### Polski
 - **Samodzielny Pakiet Wykonywalny dla Windows:** Wprowadzono przenośną dystrybucję desktopową dla systemu Windows x64 (`mistral-tts-windows-x64.zip`), integrującą plik wykonywalny PyInstaller, zasoby webowe oraz skompilowane binarki FFmpeg i FFprobe bez konieczności instalowania Pythona czy konfiguracji zmiennych środowiskowych.
 - **Dynamiczne Rozpoznawanie Binariów:** Wdrożono moduł [`src/core/ffmpeg_utils.py`](file:///home/fox/repos/mistral-tts/src/core/ffmpeg_utils.py) z 4-poziomową hierarchią wyszukiwania (`_MEIPASS`, katalog `sys.executable`, katalog projektu, systemowy `PATH`), priorytetem rozszerzenia `.exe` na Windows i ochroną przed kolizjami katalogów. Zintegrowano z `AudioCompiler` i `MistralTTSClient`.
 - **Launcher Desktopowy:** Utworzono moduł [`src/desktop.py`](file:///home/fox/repos/mistral-tts/src/desktop.py) oraz plik startowy [`desktop.py`](file:///home/fox/repos/mistral-tts/desktop.py) z automatycznym wykrywaniem wolnego portu (od 8000), automatycznym otwieraniem domyślnej przeglądarki, kotwiczeniem katalogu roboczego oraz obsługą parametrów wiersza poleceń.
-- **Pakowanie i Potok CI:** Dodano specyfikację [`mistral-tts.spec`](file:///home/fox/repos/mistral-tts/mistral-tts.spec) dla pakowania `onedir` oraz potok CI w Gitea Actions [`.gitea/workflows/build-windows.yml`](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml) uruchamiany na runnerach linuksowych z kontenerem `tobix/pywine:3.11`, pobierający FFmpeg (Gyan.dev z zapasowym źródłem BtbN), generujący skrypt pomocniczy `run.bat` i publikujący archiwum ZIP jako artefakt.
+- **Pakowanie i Potok CI:** Dodano specyfikację [`mistral-tts.spec`](file:///home/fox/repos/mistral-tts/mistral-tts.spec) dla pakowania `onedir` oraz potok CI w Gitea Actions [`.gitea/workflows/build-windows.yml`](file:///home/fox/repos/mistral-tts/.gitea/workflows/build-windows.yml) uruchamiany na runnerach linuksowych z natywnym Wine i Windows Python 3.11, pobierający FFmpeg (Gyan.dev z zapasowym źródłem BtbN), generujący skrypt pomocniczy `run.bat` i publikujący archiwum ZIP jako artefakt.

@@ -12,6 +12,9 @@ on:
 jobs:
   build-windows:
     runs-on: ubuntu-latest
+    env:
+      WINEARCH: win64
+      WINEDEBUG: -all
     steps:
       - name: Check out source code
         run: |
@@ -26,7 +29,11 @@ jobs:
         run: |
           mkdir -p bin
           if ! command -v unzip >/dev/null 2>&1 || ! command -v zip >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y --no-install-recommends curl unzip zip
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update && sudo apt-get install -y --no-install-recommends curl unzip zip
+            else
+              apt-get update && apt-get install -y --no-install-recommends curl unzip zip
+            fi
           fi
           echo "Downloading FFmpeg for Windows..."
           curl -L --retry 3 -o ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" || \
@@ -39,14 +46,37 @@ jobs:
           echo "Binaries placed in bin/:"
           ls -la bin/
 
-      - name: Build Windows Executable via PyWine Container
+      - name: Install Wine and Windows Python 3.11
         run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            -e WINEDEBUG=-all \
-            tobix/pywine:3.11 \
-            sh -c "wine pip install --upgrade pip && wine pip install -r requirements.txt && wine pip install pyinstaller && wine pyinstaller mistral-tts.spec"
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO dpkg --add-architecture i386 || true
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends \
+            wine wine64 ca-certificates curl unzip zip || true
+          $SUDO apt-get install -y --no-install-recommends wine32 || true
+
+          wineboot --init
+          wineserver -w || true
+
+          echo "Downloading Windows Python 3.11 installer..."
+          curl -sSL -o python-installer.exe "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+          echo "Installing Windows Python in Wine..."
+          wine python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
+          rm -f python-installer.exe
+          wineserver -w || true
+
+          echo "Verifying Wine Python installation..."
+          wine python --version
+
+      - name: Install Dependencies and PyInstaller inside Wine
+        run: |
+          wine python -m pip install --upgrade pip
+          wine python -m pip install -r requirements.txt
+          wine python -m pip install pyinstaller
+
+      - name: Build Windows Executable with PyInstaller
+        run: |
+          wine python -m PyInstaller mistral-tts.spec || wine pyinstaller mistral-tts.spec
 
       - name: Package Release Bundle
         run: |
