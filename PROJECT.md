@@ -130,3 +130,4 @@ mistral-tts/
 - [x] **Standalone Windows Portable Executable (PyInstaller + FFmpeg bundle):** Bundled Windows executable and Gitea Actions CI pipeline creating zero-setup desktop zip packages.
 - [ ] **WebUI About Modal & Current Version Display:** Add a menu item / modal for "About" that displays application metadata, current version (e.g. 1.0.2), license, and project links.
 - [ ] **WebUI Help / Quick Guide:** Interactive help or documentation drawer/modal explaining parameters (chunking, temperature, voices, engines, loudnorm) and troubleshooting tips.
+- [ ] **ElevenLabs TTS Integration (incl. Free Tier Constraints):** Support ElevenLabs as an additional TTS engine option alongside Mistral and OpenAI, with dedicated handling for Free Tier limits (monthly character budgets, concurrency caps, and rate limits).
