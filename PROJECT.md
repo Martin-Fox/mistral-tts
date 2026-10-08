@@ -33,9 +33,7 @@ Mistral-TTS-Booksmith bridges the gap between raw text / ebook files and polishe
 
 ### Structure
 mistral-tts/
-├── ai_light/
-│   ├── AGENTS.md              # Project-scoped AI rules & workflow
-│   └── PROJECT.md             # Project overview & architecture
+├── AGENTS.md                  # Project-scoped AI rules & workflow
 ├── PROJECT.md                 # Root project overview & architecture
 ├── desktop.py                 # Root entrypoint for Desktop Launcher
 ├── mistral-tts.spec           # PyInstaller multi-asset bundling specification

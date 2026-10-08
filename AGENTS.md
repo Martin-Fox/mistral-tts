@@ -2,7 +2,7 @@
 
 ## 0. Mandatory workflow
 Before solving ANY task:
-1. Read /ai_light/PROJECT.md
+1. Read /PROJECT.md
 2. Summarize relevant parts in 2–4 bullets
 3. Then proceed
 
