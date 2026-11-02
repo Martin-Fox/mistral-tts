@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Union, List, Dict, Any
 from src.api.base_client import BaseTTSClient
+from src.api.factory import DEFAULT_TTS_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ class OpenAITTSClient(BaseTTSClient):
     def __init__(self, api_key: str):
         super().__init__(api_key)
         self.api_url = "https://api.openai.com/v1/audio/speech"
-        self.model = "tts-1"
+        self.model = DEFAULT_TTS_MODELS["openai"]
         self.voice_id = "alloy"  # Default voice
 
     def set_voice_id(self, voice_id: str) -> None:

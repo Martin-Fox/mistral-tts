@@ -9,6 +9,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from mistralai.client import Mistral
 from src.api.base_client import BaseTTSClient
+from src.api.factory import DEFAULT_TTS_MODELS
 from src.core.config import get_translation_model
 
 load_dotenv()
@@ -32,7 +33,7 @@ class MistralTTSClient(BaseTTSClient):
         """
         super().__init__(api_key)
         self.client = Mistral(api_key=api_key.strip())
-        self.model = "voxtral-mini-tts-2603"
+        self.model = DEFAULT_TTS_MODELS["mistral"]
         self.translation_model = translation_model or get_translation_model()
         self.voice_sample_path: Optional[Path] = None
         self.voice_id: Optional[str] = None

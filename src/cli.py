@@ -1,6 +1,5 @@
 import asyncio
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -12,6 +11,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich.panel import Panel
 from rich.logging import RichHandler
 from src.core.text_splitter import TextSplitter
+from src.core.cache_identity import get_cache_key, hash_sample_file
+from src.core.config import get_translation_model
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
@@ -83,6 +84,7 @@ class BooksmithCLI:
     ):
         console.print(Panel.fit("Mistral-TTS-Booksmith", style="bold magenta"))
 
+        engine = engine.strip().lower()
         # Resolve the correct TTS API key and get client
         tts_api_key = openai_key if engine == "openai" else self.api_key
         if not tts_api_key:
@@ -90,20 +92,23 @@ class BooksmithCLI:
         
         client = get_tts_client(engine, tts_api_key)
 
+        from src.core.epub_parser import read_input_text
+        original_text = read_input_text(text_path)
+        effective_translation_model = get_translation_model() if target_lang else None
+
         # 0. Translate text if target language is specified
         if target_lang:
             if not self.api_key:
                 raise ValueError("Mistral API key is required for translation.")
             source = source_lang or "English"
             with console.status(f"[bold blue]Translating text from {source} to {target_lang}..."):
-                translation_client = MistralTTSClient(api_key=self.api_key)
+                translation_client = MistralTTSClient(api_key=self.api_key, translation_model=effective_translation_model)
                 text_path = await translation_client.translate_file(text_path, source, target_lang)
                 logger.info(f"Translation completed. Translated file: {text_path}")
 
         # 1. Read input text
         with console.status("[bold green]Reading input text..."):
-            from src.core.epub_parser import read_input_text
-            text = read_input_text(text_path)
+            text = read_input_text(text_path) if target_lang else original_text
             # 2. Split text
             chunks = self.splitter.split(text)
             total_chars = sum(len(c) for c in chunks)
@@ -113,6 +118,8 @@ class BooksmithCLI:
         voice_str = str(voice_path).strip() if voice_path else ""
         voice_provided = bool(voice_str and voice_str != ".")
 
+        sample_hash = None
+        voice_id = None
         if engine == "openai":
             if voice_provided and voice_path.exists():
                 raise ValueError("OpenAI TTS does not support voice cloning. Please select an OpenAI preset voice instead.")
@@ -120,6 +127,7 @@ class BooksmithCLI:
             client.set_voice_id(voice_id)
         elif engine == "mistral":
             if voice_provided and voice_path.exists():
+                sample_hash = hash_sample_file(voice_path)
                 with console.status("[bold cyan]Cloning voice profile..."):
                     await client.clone_voice(voice_path)
                     logger.info("Voice profile cloned successfully.")
@@ -127,19 +135,36 @@ class BooksmithCLI:
                 voice_id = voice_str if voice_provided else "en_paul_neutral"
                 client.set_voice_id(voice_id)
 
-        # Compute isolated cache key based on sha256(text + voice_str + source_lang + target_lang)
-        cache_key = hashlib.sha256(
-            f"{text}{voice_str}{source_lang or ''}{target_lang or ''}".encode("utf-8")
-        ).hexdigest()
+        cache_key = get_cache_key(
+            original_text, voice_id, None, None,
+            source_lang, target_lang, effective_translation_model,
+            engine=engine, tts_model=client.model, voice_sample_hash=sample_hash,
+            max_chars=self.splitter.max_chars,
+        )
         self.cache_dir = self.base_cache_dir / cache_key
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.cache_dir / "manifest.json"
 
         # 4. Process chunks with progress bar
         manifest = self.load_manifest()
-        cached_chunks = list(manifest.get("chunks", []))
+        cached_chunks = manifest.get("chunks", [])
+        if not isinstance(cached_chunks, list):
+            cached_chunks = []
+        completed = manifest.get("completed", [])
+        if not isinstance(completed, list):
+            completed = []
+        # Invalidate stale completion markers before publishing the new text list.
+        # Otherwise an interrupted regeneration could reuse old audio on resume.
+        manifest["completed"] = [
+            f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
+            if i < len(cached_chunks) and cached_chunks[i] == chunk
+            and f"chunk_{i:04d}.mp3" in completed
+            and (self.cache_dir / f"chunk_{i:04d}.mp3").exists()
+            and (self.cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
+        ]
         manifest["chunks"] = chunks
-        
+        self.save_manifest(manifest)
+
         chunk_files = []
         
         with Progress(
@@ -157,13 +182,8 @@ class BooksmithCLI:
                 chunk_path = self.cache_dir / chunk_filename
                 chunk_files.append(chunk_path)
 
-                chunk_matches = True
-                if cached_chunks:
-                    chunk_matches = (len(cached_chunks) > i and cached_chunks[i] == chunk)
-
                 if (
                     chunk_filename in manifest.get("completed", [])
-                    and chunk_matches
                     and chunk_path.exists()
                     and chunk_path.stat().st_size > 100
                 ):
@@ -173,7 +193,8 @@ class BooksmithCLI:
                 await client.generate_audio(chunk, chunk_path)
                 if "completed" not in manifest:
                     manifest["completed"] = []
-                manifest["completed"].append(chunk_filename)
+                if chunk_filename not in manifest["completed"]:
+                    manifest["completed"].append(chunk_filename)
                 self.save_manifest(manifest)
                 progress.advance(task)
 

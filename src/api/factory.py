@@ -1,5 +1,7 @@
 from src.api.base_client import BaseTTSClient
 
+DEFAULT_TTS_MODELS = {"mistral": "voxtral-mini-tts-2603", "openai": "tts-1"}
+
 def get_tts_client(engine: str, api_key: str) -> BaseTTSClient:
     """
     Factory function to retrieve a TTS client for the specified engine.
