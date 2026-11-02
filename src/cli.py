@@ -16,6 +16,7 @@ from src.core.config import get_translation_model
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
+from src.core.cache_io import cache_lock, save_json_atomic, generate_chunk_atomic, run_blocking_until_done
 
 # Configure Rich logging
 logging.basicConfig(
@@ -59,18 +60,7 @@ class BooksmithCLI:
     def save_manifest(self, manifest: dict):
         if not self.manifest_path:
             return
-        temp_path = self.manifest_path.with_suffix(".tmp")
-        try:
-            with open(temp_path, "w") as f:
-                json.dump(manifest, f, indent=4)
-            temp_path.replace(self.manifest_path)
-        except Exception:
-            if temp_path.exists():
-                try:
-                    temp_path.unlink()
-                except Exception:
-                    pass
-            raise
+        save_json_atomic(self.manifest_path, manifest)
 
     async def run(
         self,
@@ -145,76 +135,78 @@ class BooksmithCLI:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.cache_dir / "manifest.json"
 
-        # 4. Process chunks with progress bar
-        manifest = self.load_manifest()
-        cached_chunks = manifest.get("chunks", [])
-        if not isinstance(cached_chunks, list):
-            cached_chunks = []
-        completed = manifest.get("completed", [])
-        if not isinstance(completed, list):
-            completed = []
-        # Invalidate stale completion markers before publishing the new text list.
-        # Otherwise an interrupted regeneration could reuse old audio on resume.
-        manifest["completed"] = [
-            f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
-            if i < len(cached_chunks) and cached_chunks[i] == chunk
-            and f"chunk_{i:04d}.mp3" in completed
-            and (self.cache_dir / f"chunk_{i:04d}.mp3").exists()
-            and (self.cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
-        ]
-        manifest["chunks"] = chunks
-        self.save_manifest(manifest)
+        logger.info("Waiting for exclusive access to the audio cache...")
+        async with cache_lock(self.cache_dir):
+            # 4. Process chunks with progress bar
+            manifest = self.load_manifest()
+            cached_chunks = manifest.get("chunks", [])
+            if not isinstance(cached_chunks, list):
+                cached_chunks = []
+            completed = manifest.get("completed", [])
+            if not isinstance(completed, list):
+                completed = []
+            # Invalidate stale completion markers before publishing the new text list.
+            # Otherwise an interrupted regeneration could reuse old audio on resume.
+            manifest["completed"] = [
+                f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
+                if i < len(cached_chunks) and cached_chunks[i] == chunk
+                and f"chunk_{i:04d}.mp3" in completed
+                and (self.cache_dir / f"chunk_{i:04d}.mp3").exists()
+                and (self.cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
+            ]
+            manifest["chunks"] = chunks
+            self.save_manifest(manifest)
 
-        chunk_files = []
+            chunk_files = []
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("[cyan]Generating audio chunks...", total=len(chunks))
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("[cyan]Generating audio chunks...", total=len(chunks))
             
-            for i, chunk in enumerate(chunks):
-                chunk_filename = f"chunk_{i:04d}.mp3"
-                chunk_path = self.cache_dir / chunk_filename
-                chunk_files.append(chunk_path)
+                for i, chunk in enumerate(chunks):
+                    chunk_filename = f"chunk_{i:04d}.mp3"
+                    chunk_path = self.cache_dir / chunk_filename
+                    chunk_files.append(chunk_path)
 
-                if (
-                    chunk_filename in manifest.get("completed", [])
-                    and chunk_path.exists()
-                    and chunk_path.stat().st_size > 100
-                ):
+                    if (
+                        chunk_filename in manifest.get("completed", [])
+                        and chunk_path.exists()
+                        and chunk_path.stat().st_size > 100
+                    ):
+                        progress.advance(task)
+                        continue
+
+                    await generate_chunk_atomic(client, chunk, chunk_path)
+                    if "completed" not in manifest:
+                        manifest["completed"] = []
+                    if chunk_filename not in manifest["completed"]:
+                        manifest["completed"].append(chunk_filename)
+                    self.save_manifest(manifest)
                     progress.advance(task)
-                    continue
 
-                await client.generate_audio(chunk, chunk_path)
-                if "completed" not in manifest:
-                    manifest["completed"] = []
-                if chunk_filename not in manifest["completed"]:
-                    manifest["completed"].append(chunk_filename)
-                self.save_manifest(manifest)
-                progress.advance(task)
+            # 5. Verify and compile final audiobook
+            if len(chunk_files) != len(chunks):
+                raise RuntimeError(f"Chunk count mismatch: expected {len(chunks)}, got {len(chunk_files)} files.")
+            for idx, cf in enumerate(chunk_files):
+                if not cf.exists() or cf.stat().st_size <= 100:
+                    raise RuntimeError(
+                        f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{len(chunks)})"
+                    )
 
-        # 5. Verify and compile final audiobook
-        if len(chunk_files) != len(chunks):
-            raise RuntimeError(f"Chunk count mismatch: expected {len(chunks)}, got {len(chunk_files)} files.")
-        for idx, cf in enumerate(chunk_files):
-            if not cf.exists() or cf.stat().st_size <= 100:
-                raise RuntimeError(
-                    f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{len(chunks)})"
+            with console.status("[bold yellow]Compiling final audiobook..."):
+                compilation_meta = await run_blocking_until_done(self.compiler.compile, chunk_files, output_path)
+                logger.info(
+                    f"Audiobook compilation verified: duration {compilation_meta.get('output_duration', 0):.2f}s "
+                    f"(expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {len(chunk_files)} chunks)."
                 )
-
-        with console.status("[bold yellow]Compiling final audiobook..."):
-            compilation_meta = self.compiler.compile(chunk_files, output_path)
-            logger.info(
-                f"Audiobook compilation verified: duration {compilation_meta.get('output_duration', 0):.2f}s "
-                f"(expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {len(chunk_files)} chunks)."
-            )
             
-        console.print(Panel(f"[bold green]Success![/bold green] Audiobook saved to: [underline]{output_path}[/underline]"))
+            console.print(Panel(f"[bold green]Success![/bold green] Audiobook saved to: [underline]{output_path}[/underline]"))
 
 async def main():
     load_dotenv()

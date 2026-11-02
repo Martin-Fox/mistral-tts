@@ -155,7 +155,7 @@ def test_generate_missing_text():
     assert response.status_code == 400
     assert "Either text_file or text_content must be provided." in response.json()["detail"]
 
-@patch("os.getenv", return_value=None)
+@patch("os.getenv", side_effect=lambda key, default=None: default)
 def test_generate_missing_api_key(mock_getenv):
     """Assert that omitting or providing an empty API key returns a client error status code 400 when not in env."""
     data = {
@@ -345,7 +345,7 @@ def test_generate_openai_voice_cloning_error():
     assert "does not support voice cloning" in response.json()["detail"]
 
 
-@patch("os.getenv", return_value=None)
+@patch("os.getenv", side_effect=lambda key, default=None: default)
 def test_generate_openai_missing_key_error(mock_getenv):
     """Assert that omitting or providing an empty OpenAI API key returns status code 400 when not in env."""
     data = {

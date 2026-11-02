@@ -62,7 +62,7 @@ async def test_cli_pre_compilation_invalid_chunk_raises_runtime_error(tmp_path):
         mock_client.generate_audio = AsyncMock(side_effect=fake_generate)
         mock_get_client.return_value = mock_client
 
-        with pytest.raises(RuntimeError, match="Missing or invalid chunk audio file before compilation"):
+        with pytest.raises(RuntimeError, match="Generated chunk audio missing or invalid"):
             await cli.run(
                 text_path=text_path,
                 voice_path=Path(""),

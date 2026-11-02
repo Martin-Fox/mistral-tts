@@ -11,6 +11,8 @@ from mistralai.client import Mistral
 from src.api.base_client import BaseTTSClient
 from src.api.factory import DEFAULT_TTS_MODELS
 from src.core.config import get_translation_model
+from src.core.cache_io import save_text_atomic
+from src.core.resource_limits import check_text
 
 load_dotenv()
 
@@ -289,8 +291,10 @@ class MistralTTSClient(BaseTTSClient):
             from src.core.epub_parser import extract_text_from_mobi
             content = extract_text_from_mobi(input_path)
         else:
-            with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+            from src.core.epub_parser import read_input_text
+            content = read_input_text(input_path)
+
+        check_text(content)
 
         # Normalize line endings
         content = content.replace("\r\n", "\n")
@@ -501,17 +505,8 @@ class MistralTTSClient(BaseTTSClient):
             translated_content = "\n\n".join(translated_paragraphs)
 
         # Write translated file atomically to prevent corrupted or truncated files
-        temp_output_path = output_path.with_suffix(f"{output_path.suffix}.tmp")
-        try:
-            with open(temp_output_path, "w", encoding="utf-8") as f:
-                f.write(translated_content)
-            temp_output_path.replace(output_path)
-        finally:
-            if temp_output_path.exists():
-                try:
-                    temp_output_path.unlink()
-                except Exception:
-                    pass
+        check_text(translated_content)
+        save_text_atomic(output_path, translated_content)
 
         logger.info(f"Translated file written to {output_path}")
         return output_path
