@@ -1,11 +1,11 @@
 import asyncio
 import contextvars
-import hashlib
 import json
 import logging
 import os
 import re
 import time
+import threading
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -18,9 +18,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator, ValidationError
 
 from src.core.text_splitter import TextSplitter
+from src.core.cache_identity import get_cache_key
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
+from src.core.auth import hash_password, verify_password, load_credentials, save_credentials
+from src.core.login_limiter import LoginLimiter
 from src.core.task_db import TaskDatabase
 from src.core.config import get_translation_model, save_translation_model
 
@@ -43,28 +46,46 @@ AUTH_FILE = Path("storage/auth.json")
 APP_USERNAME = os.getenv("APP_USERNAME", "admin")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "admin")
 
-if AUTH_FILE.exists():
+APP_PASSWORD_HASH = None
+
+# Process-local sessions: run the WebUI with one worker.
+active_sessions: dict[str, float] = {}
+auth_lock = threading.RLock()
+login_limiter = LoginLimiter()
+SESSION_TTL_SECONDS = 28800
+SESSION_COOKIE_SECURE = False
+
+
+def configure_sessions():
+    global SESSION_TTL_SECONDS, SESSION_COOKIE_SECURE
     try:
-        with open(AUTH_FILE, "r") as f:
-            auth_data = json.load(f)
-            APP_USERNAME = auth_data.get("username", APP_USERNAME)
-            APP_PASSWORD = auth_data.get("password", APP_PASSWORD)
-        logger.info("Loaded persisted credentials from storage/auth.json")
-    except Exception as e:
-        logger.error(f"Failed to load persisted credentials: {e}")
+        ttl = int(os.getenv("SESSION_TTL_SECONDS", "28800"))
+        workers = int(os.getenv("WEB_CONCURRENCY", "1"))
+    except ValueError:
+        raise RuntimeError("SESSION_TTL_SECONDS and WEB_CONCURRENCY must be positive integers") from None
+    secure = os.getenv("SESSION_COOKIE_SECURE", "false").lower().strip()
+    if ttl <= 0 or workers != 1 or secure not in ("true", "false"):
+        raise RuntimeError(
+            "Use SESSION_TTL_SECONDS > 0, SESSION_COOKIE_SECURE=true/false "
+            "and a single WebUI worker (WEB_CONCURRENCY=1)."
+        )
+    SESSION_TTL_SECONDS = ttl
+    SESSION_COOKIE_SECURE = secure == "true"
 
-if APP_USERNAME == "admin" and APP_PASSWORD == "admin":
-    logger.warning("Using default credentials (admin/admin). Please set APP_USERNAME and APP_PASSWORD in your environment or .env file.")
 
-# Active sessions store (in-memory)
-active_sessions = set()
+def session_is_valid(session_id: Optional[str]) -> bool:
+    with auth_lock:
+        now = time.monotonic()
+        for expired in [sid for sid, expiry in active_sessions.items() if expiry <= now]:
+            active_sessions.pop(expired, None)
+        return bool(session_id and session_id in active_sessions)
 
 def verify_session(session_id: Optional[str] = Cookie(None)):
     """
     Validates the session cookie.
     Designed as a pluggable dependency to allow easy transition to OIDC/Pocket-ID in the future.
     """
-    if not session_id or session_id not in active_sessions:
+    if not session_is_valid(session_id):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
@@ -105,46 +126,6 @@ class TaskLogHandler(logging.Handler):
 global_log_handler = TaskLogHandler(db)
 logging.getLogger("booksmith").addHandler(global_log_handler)
 logging.getLogger("src").addHandler(global_log_handler)
-
-def get_cache_key(
-    text: str,
-    voice_preset: Optional[str],
-    voice_manual_id: Optional[str],
-    voice_bytes: Optional[bytes],
-    source_lang: Optional[str],
-    target_lang: Optional[str],
-    translation_model: Optional[str] = None
-) -> str:
-    """
-    Generates a unique cache key based on text, voice, and translation parameters.
-
-    Args:
-        text: Source text chunk to synthesize.
-        voice_preset: Preset voice name if used.
-        voice_manual_id: Custom voice ID if used.
-        voice_bytes: Reference voice audio bytes for cloning.
-        source_lang: Source language code/name.
-        target_lang: Target language code/name.
-        translation_model: Mistral model ID used for translation.
-
-    Returns:
-        str: SHA-256 hexadecimal hash string.
-    """
-    hasher = hashlib.sha256()
-    hasher.update(text.encode("utf-8"))
-    if voice_preset:
-        hasher.update(voice_preset.encode("utf-8"))
-    if voice_manual_id:
-        hasher.update(voice_manual_id.encode("utf-8"))
-    if voice_bytes:
-        hasher.update(voice_bytes)
-    if source_lang:
-        hasher.update(source_lang.encode("utf-8"))
-    if target_lang:
-        hasher.update(target_lang.encode("utf-8"))
-    if translation_model:
-        hasher.update(translation_model.encode("utf-8"))
-    return hasher.hexdigest()
 
 def load_manifest(manifest_path: Path) -> dict:
     """Loads cache manifest file if it exists."""
@@ -190,6 +171,7 @@ async def run_generation_pipeline(
     Asynchronous pipeline task that handles file translation, voice cloning,
     audio chunk generation, and final compilation.
     """
+    engine = engine.strip().lower()
     text_path = None
     voice_path = None
     translated_path = None
@@ -235,26 +217,15 @@ async def run_generation_pipeline(
         from src.core.epub_parser import read_input_text
         text = read_input_text(text_path)
 
-        # Generate cache key using parameters and inputs
-        cache_key = get_cache_key(
-            text=text,
-            voice_preset=voice_preset,
-            voice_manual_id=voice_manual_id,
-            voice_bytes=voice_bytes,
-            source_lang=source_lang,
-            target_lang=target_lang,
-            translation_model=translation_model
-        )
-        cache_dir = Path("storage/cache") / cache_key
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = cache_dir / "manifest.json"
+        original_text = text
+        effective_translation_model = (translation_model or get_translation_model()) if target_lang else None
 
         # 3. Translation step
         if target_lang:
             db.update_task(task_id, status="Translating")
             source = source_lang or "English"
             logger.info(f"Translating text from {source} to {target_lang}...")
-            translation_client = MistralTTSClient(api_key=api_key, translation_model=translation_model)
+            translation_client = MistralTTSClient(api_key=api_key, translation_model=effective_translation_model)
             translated_path = await translation_client.translate_file(text_path, source, target_lang)
             logger.info(f"Translation completed. Translated file: {translated_path}")
             text = read_input_text(translated_path)
@@ -272,6 +243,15 @@ async def run_generation_pipeline(
         # Resolve correct TTS API key and client
         tts_api_key = openai_key if engine == "openai" else api_key
         client = get_tts_client(engine, tts_api_key)
+
+        cache_key = get_cache_key(
+            original_text, voice_preset, voice_manual_id, voice_bytes,
+            source_lang, target_lang, effective_translation_model,
+            engine=engine, tts_model=client.model, max_chars=splitter.max_chars,
+        )
+        cache_dir = Path("storage/cache") / cache_key
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = cache_dir / "manifest.json"
 
         # 5. Clone or configure voice
         db.update_task(task_id, status="Configuring Voice")
@@ -297,7 +277,23 @@ async def run_generation_pipeline(
         # 6. Load manifest and generate audio chunks
         db.update_task(task_id, status="Generating Audio")
         manifest = load_manifest(manifest_path)
+        cached_chunks = manifest.get("chunks", [])
+        if not isinstance(cached_chunks, list):
+            cached_chunks = []
+        completed = manifest.get("completed", [])
+        if not isinstance(completed, list):
+            completed = []
+        # Invalidate stale completion markers before publishing the new text list.
+        # Otherwise an interrupted regeneration could reuse old audio on resume.
+        manifest["completed"] = [
+            f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
+            if i < len(cached_chunks) and cached_chunks[i] == chunk
+            and f"chunk_{i:04d}.mp3" in completed
+            and (cache_dir / f"chunk_{i:04d}.mp3").exists()
+            and (cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
+        ]
         manifest["chunks"] = chunks
+        save_manifest(manifest_path, manifest)
 
         chunk_files = []
         for i, chunk in enumerate(chunks):
@@ -307,8 +303,6 @@ async def run_generation_pipeline(
 
             if (
                 chunk_filename in manifest.get("completed", [])
-                and len(manifest.get("chunks", [])) > i
-                and manifest["chunks"][i] == chunk
                 and chunk_path.exists()
                 and chunk_path.stat().st_size > 100
             ):
@@ -322,7 +316,8 @@ async def run_generation_pipeline(
 
             if "completed" not in manifest:
                 manifest["completed"] = []
-            manifest["completed"].append(chunk_filename)
+            if chunk_filename not in manifest["completed"]:
+                manifest["completed"].append(chunk_filename)
             save_manifest(manifest_path, manifest)
 
             percentage = int(((i + 1) / total_chunks) * 90)
@@ -391,33 +386,40 @@ class ChangePasswordRequest(BaseModel):
 
 @app.post("/api/auth/change-password")
 def change_password(request: ChangePasswordRequest, session: str = Depends(verify_session)):
+    # Serialize password verification/publication against concurrent logins.
+    with auth_lock:
+        return _change_password(request)
+
+
+def _change_password(request: ChangePasswordRequest):
     """
     Endpoint to change the password for the current user.
     Persists the new password to storage/auth.json so it survives restarts.
     """
-    global APP_PASSWORD
+    global APP_PASSWORD_HASH
     
     # Verify current password
-    if not secrets.compare_digest(request.current_password, APP_PASSWORD):
+    if not verify_password(request.current_password, APP_PASSWORD_HASH):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect current password"
         )
     
     # Validate new password
-    if not request.new_password or len(request.new_password.strip()) < 4:
+    if not request.new_password or len(request.new_password.strip()) < 4 or request.new_password.strip() == "admin":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be at least 4 characters long"
+            detail="New password must be at least 4 characters long and must not be admin"
         )
         
     # Persist the new credentials
     try:
-        with open(AUTH_FILE, "w") as f:
-            json.dump({"username": APP_USERNAME, "password": request.new_password}, f, indent=4)
+        new_hash = hash_password(request.new_password)
+        save_credentials(AUTH_FILE, APP_USERNAME, new_hash)
         
         # Update in-memory
-        APP_PASSWORD = request.new_password
+        APP_PASSWORD_HASH = new_hash
+        active_sessions.clear()
         logger.info(f"Password successfully changed for user: {APP_USERNAME}")
         return {"message": "Password updated successfully. Please log in with your new credentials."}
     except Exception as e:
@@ -432,12 +434,25 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
-def login(request: LoginRequest, response: Response):
+def login(request: LoginRequest, response: Response, http_request: Request):
+    source = http_request.client.host if http_request.client else "unknown"
+    retry_after = login_limiter.consume(source, request.username)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)}
+        )
+    with auth_lock:
+        return _login(request, response)
+
+
+def _login(request: LoginRequest, response: Response):
     """
     Verifies credentials and sets a session cookie.
     """
-    is_correct_username = secrets.compare_digest(request.username, APP_USERNAME)
-    is_correct_password = secrets.compare_digest(request.password, APP_PASSWORD)
+    is_correct_username = secrets.compare_digest(request.username.encode("utf-8"), APP_USERNAME.encode("utf-8"))
+    is_correct_password = verify_password(request.password, APP_PASSWORD_HASH)
     if not (is_correct_username and is_correct_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -445,13 +460,15 @@ def login(request: LoginRequest, response: Response):
         )
     
     session_id = str(uuid.uuid4())
-    active_sessions.add(session_id)
+    session_is_valid(None)  # Evict expired entries before adding a session.
+    active_sessions[session_id] = time.monotonic() + SESSION_TTL_SECONDS
     response.set_cookie(
         key="session_id",
         value=session_id,
         httponly=True,
         samesite="lax",
-        secure=False
+        secure=SESSION_COOKIE_SECURE,
+        max_age=SESSION_TTL_SECONDS
     )
     return {"message": "Login successful"}
 
@@ -461,9 +478,9 @@ def logout(request: Request, response: Response):
     Clears the session cookie and removes the session from memory.
     """
     session_id = request.cookies.get("session_id")
-    if session_id in active_sessions:
-        active_sessions.remove(session_id)
-    response.delete_cookie(key="session_id")
+    with auth_lock:
+        active_sessions.pop(session_id, None)
+    response.delete_cookie(key="session_id", httponly=True, samesite="lax", secure=SESSION_COOKIE_SECURE)
     return {"message": "Logged out successfully"}
 
 @app.get("/api/auth/status")
@@ -472,7 +489,7 @@ def get_auth_status(request: Request):
     Returns the current authentication status of the user.
     """
     session_id = request.cookies.get("session_id")
-    if session_id and session_id in active_sessions:
+    if session_is_valid(session_id):
         return {"authenticated": True, "username": APP_USERNAME}
     return {"authenticated": False}
 
@@ -574,6 +591,8 @@ async def get_progress(
     async def event_generator():
         current_last_id = last_log_id
         while True:
+            if not session_is_valid(session):
+                break
             task_state = db.get_task(task_id)
             if not task_state:
                 break
@@ -741,5 +760,9 @@ async def task_purger_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    global APP_USERNAME, APP_PASSWORD, APP_PASSWORD_HASH
+    configure_sessions()
+    APP_USERNAME, APP_PASSWORD_HASH = load_credentials(AUTH_FILE, APP_USERNAME, APP_PASSWORD)
+    APP_PASSWORD = None
     asyncio.create_task(task_purger_loop())
 

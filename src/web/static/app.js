@@ -37,16 +37,28 @@ document.addEventListener('DOMContentLoaded', () => {
     let renderedLogCount = 0;
     
     // === 1. API Key Management ===
-    // Load saved API key
-    const savedApiKey = localStorage.getItem('api_key');
-    if (savedApiKey) {
-        apiKeyInput.value = savedApiKey;
+    function clearStoredApiKeys() {
+        for (const key of ['api_key', 'openai_key']) {
+            try {
+                localStorage.removeItem(key);
+            } catch {
+                // Storage can be disabled by browser policy. Keep the UI usable.
+            }
+        }
     }
-    const savedOpenaiKey = localStorage.getItem('openai_key');
-    if (savedOpenaiKey && openaiKeyInput) {
-        openaiKeyInput.value = savedOpenaiKey;
+
+    function clearApiKeyInputs() {
+        for (const input of [apiKeyInput, openaiKeyInput]) {
+            if (input) {
+                input.value = '';
+                input.type = 'password';
+            }
+        }
     }
-    
+
+    // Discard keys retained by older versions; never restore them into the form.
+    clearStoredApiKeys();
+
     // Toggle API Key visibility
     toggleApiVisibilityBtn.addEventListener('click', () => {
         const isPassword = apiKeyInput.type === 'password';
@@ -360,7 +372,6 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         
         // --- Validation ---
-        const apiKey = apiKeyInput.value.trim();
 
         const textFileInput = document.getElementById('text-file');
         const textContentInput = document.getElementById('text-content');
@@ -373,21 +384,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Save or clear API key in localStorage
-        if (apiKey) {
-            localStorage.setItem('api_key', apiKey);
-        } else {
-            localStorage.removeItem('api_key');
-        }
-
-        const openaiKey = openaiKeyInput ? openaiKeyInput.value.trim() : '';
-        if (openaiKey) {
-            localStorage.setItem('openai_key', openaiKey);
-        } else {
-            localStorage.removeItem('openai_key');
-        }
-
-
         // --- Form Data Assembly & Cleanup ---
         const formData = new FormData(generatorForm);
         const voiceMode = formData.get('voice_mode');
@@ -645,7 +641,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 
                 if (response.ok) {
-                    showPasswordStatus('Password updated successfully. The new password will be required on your next login.', 'success');
+                    showPasswordStatus('Password updated. All sessions have been signed out.', 'success');
+                    await checkAuthStatus();
+                    showLoginStatus('Password updated. Sign in with your new password.', 'success');
                     passwordForm.reset();
                 } else {
                     const data = await response.json();
@@ -713,6 +711,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (loginOverlay) loginOverlay.classList.add('hidden');
                 loadConfig();
             } else {
+                clearStoredApiKeys();
+                clearApiKeyInputs();
                 if (loginOverlay) loginOverlay.classList.remove('hidden');
             }
         } catch (error) {
@@ -775,6 +775,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch (error) {
                     console.error('Error during logout request:', error);
                 } finally {
+                    clearStoredApiKeys();
+                    clearApiKeyInputs();
                     // Show login overlay again immediately and reset form
                     if (loginOverlay) loginOverlay.classList.remove('hidden');
                     if (settingsCard) settingsCard.classList.add('hidden');

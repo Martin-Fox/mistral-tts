@@ -1,6 +1,9 @@
 import re
 from typing import List
 
+# Bump when segmentation semantics change in a way that invalidates cached audio.
+SPLITTER_VERSION = 1
+
 class TextSplitter:
     """
     Handles semantic text segmentation for long-form content.
