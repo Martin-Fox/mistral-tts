@@ -6,13 +6,16 @@ import os
 import re
 import time
 import threading
+import tempfile
+import zipfile
+import xml.etree.ElementTree as ET
 import uuid
 from pathlib import Path
 from typing import Optional
 
 import secrets
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
+from fastapi import APIRouter, FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator, ValidationError
@@ -21,7 +24,10 @@ from src.core.text_splitter import TextSplitter
 from src.core.cache_identity import get_cache_key
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
+from src.core.resource_limits import ResourceLimits, ResourceLimitExceeded, check_text
+from src.web_limits import JobController, GenerationRequestLimits, GenerationRoute
 from src.core.audio_compiler import AudioCompiler
+from src.core.cache_io import cache_lock, save_json_atomic, generate_chunk_atomic, run_blocking_until_done
 from src.core.auth import hash_password, verify_password, load_credentials, save_credentials
 from src.core.login_limiter import LoginLimiter
 from src.core.task_db import TaskDatabase
@@ -96,6 +102,21 @@ app = FastAPI(
     title="Mistral TTS Booksmith API"
 )
 
+job_controller = JobController(running=2, queued=2)
+app.add_middleware(GenerationRequestLimits, controller=lambda: job_controller)
+
+
+async def read_upload_bounded(upload: UploadFile, limit: int) -> bytes:
+    content = bytearray()
+    while True:
+        chunk = await upload.read(min(65536, limit - len(content) + 1))
+        if not chunk:
+            return bytes(content)
+        content.extend(chunk)
+        if len(content) > limit:
+            raise HTTPException(status_code=413, detail="Uploaded file exceeds its size limit")
+
+
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
 
@@ -138,19 +159,8 @@ def load_manifest(manifest_path: Path) -> dict:
     return {"chunks": [], "completed": []}
 
 def save_manifest(manifest_path: Path, manifest: dict):
-    """Saves cache manifest file atomically using a temporary file and replace."""
-    temp_path = manifest_path.with_suffix(".tmp")
-    try:
-        with open(temp_path, "w") as f:
-            json.dump(manifest, f, indent=4)
-        temp_path.replace(manifest_path)
-    except Exception as e:
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
-        raise e
+    """Publish the manifest from a unique temporary file under the cache lock."""
+    save_json_atomic(manifest_path, manifest)
 
 async def run_generation_pipeline(
     task_id: str,
@@ -274,84 +284,90 @@ async def run_generation_pipeline(
                 logger.info("No voice specified. Defaulting to en_paul_neutral.")
                 client.set_voice_id("en_paul_neutral")
 
-        # 6. Load manifest and generate audio chunks
-        db.update_task(task_id, status="Generating Audio")
-        manifest = load_manifest(manifest_path)
-        cached_chunks = manifest.get("chunks", [])
-        if not isinstance(cached_chunks, list):
-            cached_chunks = []
-        completed = manifest.get("completed", [])
-        if not isinstance(completed, list):
-            completed = []
-        # Invalidate stale completion markers before publishing the new text list.
-        # Otherwise an interrupted regeneration could reuse old audio on resume.
-        manifest["completed"] = [
-            f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
-            if i < len(cached_chunks) and cached_chunks[i] == chunk
-            and f"chunk_{i:04d}.mp3" in completed
-            and (cache_dir / f"chunk_{i:04d}.mp3").exists()
-            and (cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
-        ]
-        manifest["chunks"] = chunks
-        save_manifest(manifest_path, manifest)
-
-        chunk_files = []
-        for i, chunk in enumerate(chunks):
-            chunk_filename = f"chunk_{i:04d}.mp3"
-            chunk_path = cache_dir / chunk_filename
-            chunk_files.append(chunk_path)
-
-            if (
-                chunk_filename in manifest.get("completed", [])
-                and chunk_path.exists()
-                and chunk_path.stat().st_size > 100
-            ):
-                logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
-                percentage = int(((i + 1) / total_chunks) * 90)
-                db.update_task(task_id, percentage=percentage)
-                continue
-
-            logger.info(f"Generating audio for chunk {i+1}/{total_chunks}...")
-            await client.generate_audio(chunk, chunk_path)
-
-            if "completed" not in manifest:
-                manifest["completed"] = []
-            if chunk_filename not in manifest["completed"]:
-                manifest["completed"].append(chunk_filename)
+        db.update_task(task_id, status="Waiting for Cache")
+        async with cache_lock(cache_dir):
+            # 6. Load manifest and generate audio chunks
+            db.update_task(task_id, status="Generating Audio")
+            manifest = load_manifest(manifest_path)
+            cached_chunks = manifest.get("chunks", [])
+            if not isinstance(cached_chunks, list):
+                cached_chunks = []
+            completed = manifest.get("completed", [])
+            if not isinstance(completed, list):
+                completed = []
+            # Invalidate stale completion markers before publishing the new text list.
+            # Otherwise an interrupted regeneration could reuse old audio on resume.
+            manifest["completed"] = [
+                f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
+                if i < len(cached_chunks) and cached_chunks[i] == chunk
+                and f"chunk_{i:04d}.mp3" in completed
+                and (cache_dir / f"chunk_{i:04d}.mp3").exists()
+                and (cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
+            ]
+            manifest["chunks"] = chunks
             save_manifest(manifest_path, manifest)
 
-            percentage = int(((i + 1) / total_chunks) * 90)
-            db.update_task(task_id, percentage=percentage)
+            chunk_files = []
+            for i, chunk in enumerate(chunks):
+                chunk_filename = f"chunk_{i:04d}.mp3"
+                chunk_path = cache_dir / chunk_filename
+                chunk_files.append(chunk_path)
 
-        # Verify all chunks have corresponding valid chunk files before compiling
-        if len(chunk_files) != total_chunks:
-            raise RuntimeError(f"Chunk count mismatch: expected {total_chunks}, got {len(chunk_files)} files.")
-        for idx, cf in enumerate(chunk_files):
-            if not cf.exists() or cf.stat().st_size <= 100:
-                raise RuntimeError(
-                    f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{total_chunks})"
-                )
+                if (
+                    chunk_filename in manifest.get("completed", [])
+                    and chunk_path.exists()
+                    and chunk_path.stat().st_size > 100
+                ):
+                    logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
+                    percentage = int(((i + 1) / total_chunks) * 90)
+                    db.update_task(task_id, percentage=percentage)
+                    continue
 
-        # 7. Compile final audiobook
-        db.update_task(task_id, status="Compiling Audiobook")
-        logger.info(f"Compiling final audiobook file from {total_chunks} chunks...")
-        compiler = AudioCompiler()
-        output_path = Path("storage/output") / output_filename
-        compilation_meta = await asyncio.to_thread(compiler.compile, chunk_files, output_path)
-        logger.info(
-            f"Audiobook compiled successfully. Saved to {output_path} "
-            f"(verified duration: {compilation_meta.get('output_duration', 0):.2f}s, "
-            f"expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {total_chunks} chunks)"
-        )
+                logger.info(f"Generating audio for chunk {i+1}/{total_chunks}...")
+                await generate_chunk_atomic(client, chunk, chunk_path)
 
-        # 8. Mark task as completed
-        db.update_task(
-            task_id,
-            percentage=100,
-            status="Completed",
-            completed=True,
-            audio_file=output_filename
-        )
+                if "completed" not in manifest:
+                    manifest["completed"] = []
+                if chunk_filename not in manifest["completed"]:
+                    manifest["completed"].append(chunk_filename)
+                save_manifest(manifest_path, manifest)
+
+                percentage = int(((i + 1) / total_chunks) * 90)
+                db.update_task(task_id, percentage=percentage)
+
+            # Verify all chunks have corresponding valid chunk files before compiling
+            if len(chunk_files) != total_chunks:
+                raise RuntimeError(f"Chunk count mismatch: expected {total_chunks}, got {len(chunk_files)} files.")
+            for idx, cf in enumerate(chunk_files):
+                if not cf.exists() or cf.stat().st_size <= 100:
+                    raise RuntimeError(
+                        f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{total_chunks})"
+                    )
+
+            # 7. Compile final audiobook
+            db.update_task(task_id, status="Compiling Audiobook")
+            logger.info(f"Compiling final audiobook file from {total_chunks} chunks...")
+            compiler = AudioCompiler()
+            requested_name = Path(output_filename)
+            # Leave room for the UUID prefix on filesystems with 255-byte names.
+            output_stem = requested_name.stem.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+            published_filename = f"{task_id}_{output_stem}{requested_name.suffix}"
+            output_path = Path("storage/output") / published_filename
+            compilation_meta = await run_blocking_until_done(compiler.compile, chunk_files, output_path)
+            logger.info(
+                f"Audiobook compiled successfully. Saved to {output_path} "
+                f"(verified duration: {compilation_meta.get('output_duration', 0):.2f}s, "
+                f"expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {total_chunks} chunks)"
+            )
+
+            # 8. Mark task as completed
+            db.update_task(
+                task_id,
+                percentage=100,
+                status="Completed",
+                completed=True,
+                audio_file=published_filename
+            )
 
     except Exception as e:
         logger.error(f"Error in generation pipeline: {e}", exc_info=True)
@@ -618,7 +634,10 @@ async def get_progress(
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-@app.post("/api/generate")
+generation_router = APIRouter(route_class=GenerationRoute)
+
+
+@generation_router.post("/api/generate")
 async def generate_audiobook(
     background_tasks: BackgroundTasks,
     text_file: Optional[UploadFile] = File(None),
@@ -703,16 +722,37 @@ async def generate_audiobook(
 
     task_id = str(uuid.uuid4())
 
+    limits = ResourceLimits.from_env()
+    if text_content is not None:
+        try:
+            check_text(text_content)
+        except ResourceLimitExceeded as error:
+            raise HTTPException(status_code=413, detail=str(error)) from None
+
     # Read uploaded file contents in the request handler to prevent closed file descriptors in background task
     text_file_data = None
     if text_file:
-        text_bytes = await text_file.read()
+        text_bytes = await read_upload_bounded(text_file, limits.max_text_upload_bytes)
         text_file_data = (text_file.filename, text_bytes)
 
     voice_file_data = None
     if voice_file:
-        voice_bytes = await voice_file.read()
+        voice_bytes = await read_upload_bounded(voice_file, limits.max_voice_upload_bytes)
         voice_file_data = (voice_file.filename, voice_bytes)
+
+    # Validate parsed size (including EPUB expansion) before creating a task or
+    # constructing an API client. Keep the original upload for the existing pipeline.
+    if text_file_data:
+        from src.core.epub_parser import read_input_text
+        with tempfile.TemporaryDirectory(prefix="booksmith-preflight-") as directory:
+            probe = Path(directory) / ("input" + Path(text_file_data[0] or "input.txt").suffix)
+            probe.write_bytes(text_file_data[1])
+            try:
+                await run_blocking_until_done(read_input_text, probe)
+            except ResourceLimitExceeded as error:
+                raise HTTPException(status_code=413, detail=str(error)) from None
+            except (ValueError, zipfile.BadZipFile, ET.ParseError):
+                raise HTTPException(status_code=400, detail="Invalid input document") from None
 
     # Initialize task state in database
     db.create_task(task_id)
@@ -736,11 +776,15 @@ async def generate_audiobook(
         pipeline_kwargs["translation_model"] = translation_model
 
     background_tasks.add_task(
+        job_controller.run,
         run_generation_pipeline,
         **pipeline_kwargs
     )
 
     return {"task_id": task_id}
+
+
+app.include_router(generation_router)
 
 
 async def task_purger_loop():
@@ -760,7 +804,9 @@ async def task_purger_loop():
 
 @app.on_event("startup")
 async def startup_event():
-    global APP_USERNAME, APP_PASSWORD, APP_PASSWORD_HASH
+    global APP_USERNAME, APP_PASSWORD, APP_PASSWORD_HASH, job_controller
+    limits = ResourceLimits.from_env()
+    job_controller = JobController(limits.max_running_jobs, limits.max_queued_jobs)
     configure_sessions()
     APP_USERNAME, APP_PASSWORD_HASH = load_credentials(AUTH_FILE, APP_USERNAME, APP_PASSWORD)
     APP_PASSWORD = None

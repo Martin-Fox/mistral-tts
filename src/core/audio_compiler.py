@@ -1,4 +1,4 @@
-import os
+import tempfile
 import re
 import subprocess
 from pathlib import Path
@@ -101,6 +101,15 @@ class AudioCompiler:
         ]
         subprocess.run(cmd, check=True, capture_output=True)
 
+    @staticmethod
+    def _concat_entry(path: Path) -> str:
+        # FFmpeg concat uses its own quoting rules, not shell argument quoting.
+        absolute = path.resolve().as_posix()
+        if any(char in absolute for char in ("\n", "\r", "\x00")):
+            raise ValueError("Concat paths cannot contain line breaks or NUL")
+        escaped = absolute.replace("'", "'\\''")
+        return f"file '{escaped}'\n"
+
     def compile(self, chunk_paths: List[Path], output_path: Path) -> dict:
         """
         Stitches audio chunks together using FFmpeg's concat demuxer.
@@ -145,40 +154,40 @@ class AudioCompiler:
         # Ensure output directory exists before generating silence files or concat list
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create temporary files for concat demuxer and silence
-        unique_suffix = f"{os.getpid()}_{id(chunk_paths)}"
-        concat_file = output_path.parent / f"concat_{output_path.stem}_{unique_suffix}.txt"
-        silence_file = output_path.parent / f"silence_{unique_suffix}.mp3"
-        trailing_silence_file = output_path.parent / f"trailing_silence_{unique_suffix}.mp3"
+        # Staging stays on the destination filesystem so replace is atomic.
+        # A private directory also isolates concurrent compilers and all cleanup.
+        with tempfile.TemporaryDirectory(prefix=".compile-", dir=output_path.parent) as directory:
+            work_dir = Path(directory)
+            concat_file = work_dir / "concat.txt"
+            silence_file = work_dir / "silence.mp3"
+            trailing_silence_file = work_dir / "trailing_silence.mp3"
+            staged_output = work_dir / f"result{output_path.suffix}"
 
-        # Probe the first chunk to match its audio properties for silence generation
-        sample_rate, channels = self._probe_audio_properties(chunk_paths[0])
+            sample_rate, channels = self._probe_audio_properties(chunk_paths[0])
+            if self.pause_duration_s > 0:
+                self._generate_silence(silence_file, duration_s=self.pause_duration_s, sample_rate=sample_rate, channels=channels)
+            if self.trailing_silence_s > 0:
+                self._generate_silence(trailing_silence_file, duration_s=self.trailing_silence_s, sample_rate=sample_rate, channels=channels)
 
-        if self.pause_duration_s > 0:
-            self._generate_silence(silence_file, duration_s=self.pause_duration_s, sample_rate=sample_rate, channels=channels)
-        if self.trailing_silence_s > 0:
-            self._generate_silence(trailing_silence_file, duration_s=self.trailing_silence_s, sample_rate=sample_rate, channels=channels)
-
-        try:
-            with open(concat_file, "w") as f:
+            with open(concat_file, "w", encoding="utf-8", newline="\n") as stream:
                 for i, chunk_path in enumerate(chunk_paths):
-                    f.write(f"file '{chunk_path.absolute()}'\n")
+                    stream.write(self._concat_entry(chunk_path))
                     if i < len(chunk_paths) - 1 and self.pause_duration_s > 0:
-                        f.write(f"file '{silence_file.absolute()}'\n")
+                        stream.write(self._concat_entry(silence_file))
                 if self.trailing_silence_s > 0:
-                    f.write(f"file '{trailing_silence_file.absolute()}'\n")
+                    stream.write(self._concat_entry(trailing_silence_file))
 
             cmd = [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                "-i", str(concat_file), "-af", "loudnorm", str(output_path)
+                "-i", str(concat_file), "-af", "loudnorm", str(staged_output)
             ]
             subprocess.run(cmd, check=True, capture_output=True)
 
-            if not output_path.exists() or output_path.stat().st_size == 0:
+            if not staged_output.exists() or staged_output.stat().st_size == 0:
                 raise RuntimeError(f"FFmpeg compilation failed to create output file: {output_path}")
 
             # Probe compiled output file duration with ffprobe
-            output_duration = self._probe_duration(output_path)
+            output_duration = self._probe_duration(staged_output)
 
             # Verification: output duration must match expected duration within a safe tolerance (e.g. 3-4 seconds)
             tolerance = 4.0
@@ -190,6 +199,8 @@ class AudioCompiler:
                     f"Audio was truncated by {expected_duration - output_duration:.2f}s!"
                 )
 
+            staged_output.replace(output_path)
+
             return {
                 "expected_duration": expected_duration,
                 "output_duration": output_duration,
@@ -197,20 +208,3 @@ class AudioCompiler:
                 "total_chunks_duration": total_chunks_duration,
                 "output_path": output_path
             }
-
-        finally:
-            if concat_file.exists():
-                try:
-                    concat_file.unlink()
-                except Exception:
-                    pass
-            if silence_file.exists():
-                try:
-                    silence_file.unlink()
-                except Exception:
-                    pass
-            if trailing_silence_file.exists():
-                try:
-                    trailing_silence_file.unlink()
-                except Exception:
-                    pass

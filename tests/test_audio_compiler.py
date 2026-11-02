@@ -60,7 +60,7 @@ def test_compile_truncation_detection_raises_runtime_error(tmp_path):
     # Simulate output file duration being truncated to 1.0s instead of ~5.5s
     orig_probe = compiler._probe_duration
     def mock_probe(p):
-        if p == output:
+        if p not in (c1, c2):
             return 1.0
         return orig_probe(p)
 
@@ -86,7 +86,7 @@ def test_compile_tolerance_boundary_pass_and_fail(tmp_path):
 
     # 1. Output duration above threshold (threshold + 0.5s) -> should PASS
     def mock_probe_pass(p):
-        if p == output:
+        if p not in (c1, c2):
             return cutoff_threshold + 0.5
         return orig_probe(p)
 
@@ -97,7 +97,7 @@ def test_compile_tolerance_boundary_pass_and_fail(tmp_path):
 
     # 2. Output duration below threshold (threshold - 0.5s) -> should FAIL with RuntimeError
     def mock_probe_fail(p):
-        if p == output:
+        if p not in (c1, c2):
             return cutoff_threshold - 0.5
         return orig_probe(p)
 

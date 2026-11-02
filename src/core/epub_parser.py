@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 import urllib.parse
+from src.core.resource_limits import ResourceLimits, ResourceLimitExceeded, check_text
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +73,30 @@ def extract_text_from_epub(epub_path: Path) -> str:
     if not zipfile.is_zipfile(epub_path):
         raise ValueError("Invalid EPUB file: Not a zip archive.")
 
+    limits = ResourceLimits.from_env()
+    if epub_path.stat().st_size > limits.max_text_upload_bytes:
+        raise ResourceLimitExceeded("Input exceeds MAX_TEXT_UPLOAD_BYTES")
     with zipfile.ZipFile(epub_path, "r") as z:
+        entries = z.infolist()
+        if len(entries) > limits.max_epub_entries:
+            raise ResourceLimitExceeded("EPUB exceeds MAX_EPUB_ENTRIES")
+        if any(entry.file_size > limits.max_epub_entry_bytes for entry in entries):
+            raise ResourceLimitExceeded("EPUB element exceeds MAX_EPUB_ENTRY_BYTES")
+        if sum(entry.file_size for entry in entries) > limits.max_epub_bytes:
+            raise ResourceLimitExceeded("EPUB exceeds MAX_EPUB_BYTES after decompression")
+        consumed = 0
+        def read_member(name):
+            nonlocal consumed
+            budget = min(limits.max_epub_entry_bytes, limits.max_epub_bytes - consumed)
+            with z.open(name) as stream:
+                data = stream.read(budget + 1)
+            if len(data) > budget:
+                raise ResourceLimitExceeded("EPUB decompression budget exceeded")
+            consumed += len(data)
+            return data
         # 1. Read container.xml to locate the OPF file
         try:
-            container_xml = z.read("META-INF/container.xml")
+            container_xml = read_member("META-INF/container.xml")
         except KeyError:
             raise ValueError("Invalid EPUB file: Missing META-INF/container.xml")
 
@@ -92,7 +113,7 @@ def extract_text_from_epub(epub_path: Path) -> str:
         
         # 2. Read and parse the OPF file
         try:
-            opf_content = z.read(opf_path_str)
+            opf_content = read_member(opf_path_str)
         except KeyError:
             raise ValueError(f"Invalid EPUB file: Missing OPF file at {opf_path_str}")
 
@@ -126,6 +147,7 @@ def extract_text_from_epub(epub_path: Path) -> str:
 
         # 3. Extract and parse HTML files in reading order
         full_text = []
+        text_size = 0
         
         for item_id in spine:
             href = manifest.get(item_id)
@@ -150,12 +172,12 @@ def extract_text_from_epub(epub_path: Path) -> str:
                 target_path = "/".join(resolved_parts)
 
             try:
-                html_bytes = z.read(target_path)
+                html_bytes = read_member(target_path)
             except KeyError:
                 # Fallback: try un-escaping URL-encoded hrefs
                 unescaped_path = urllib.parse.unquote(target_path)
                 try:
-                    html_bytes = z.read(unescaped_path)
+                    html_bytes = read_member(unescaped_path)
                 except KeyError:
                     logger.warning(f"Could not find manifest item '{item_id}' at path '{target_path}' inside EPUB archive.")
                     continue
@@ -166,6 +188,9 @@ def extract_text_from_epub(epub_path: Path) -> str:
             extractor.feed(html_content)
             extracted_text = extractor.get_text()
             if extracted_text:
+                text_size += len(extracted_text) + (2 if full_text else 0)
+                if text_size > limits.max_text_chars:
+                    raise ResourceLimitExceeded("Text exceeds MAX_TEXT_CHARS")
                 full_text.append(extracted_text)
 
         if not full_text:
@@ -184,6 +209,8 @@ def extract_text_from_mobi(mobi_path: Path) -> str:
     if not mobi_path.exists():
         raise FileNotFoundError(f"MOBI file not found: {mobi_path}")
 
+    if mobi_path.stat().st_size > ResourceLimits.from_env().max_text_upload_bytes:
+        raise ResourceLimitExceeded("Input exceeds MAX_TEXT_UPLOAD_BYTES")
     tempdir = None
     try:
         # Extract MOBI to a temporary directory
@@ -193,21 +220,26 @@ def extract_text_from_mobi(mobi_path: Path) -> str:
         if not filepath.exists():
             raise FileNotFoundError(f"Extracted MOBI content not found at {filepath_str}")
 
+        limits = ResourceLimits.from_env()
+        if filepath.stat().st_size > limits.max_epub_bytes:
+            raise ResourceLimitExceeded("Extracted MOBI content exceeds MAX_EPUB_BYTES")
         suffix = filepath.suffix.lower()
         if suffix in {".html", ".xhtml", ".htm"}:
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                html_content = f.read()
+                html_content = f.read(limits.max_epub_bytes + 1)
             extractor = HTMLTextExtractor()
             extractor.feed(html_content)
             text = extractor.get_text()
         else:
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read()
+                text = f.read(limits.max_text_chars + 1)
 
         if not text.strip():
             raise ValueError("MOBI file contains no readable text content.")
 
-        return text
+        return check_text(text)
+    except ResourceLimitExceeded:
+        raise
     except Exception as e:
         logger.error(f"Failed to extract text from MOBI file {mobi_path}: {e}")
         raise ValueError(f"Failed to parse MOBI file: {e}")
@@ -224,6 +256,9 @@ def read_input_text(file_path: Path) -> str:
     Reads the text content of a file. Supports .epub, .mobi, and defaults to plain text.
     Handles encoding issues robustly.
     """
+    limits = ResourceLimits.from_env()
+    if file_path.stat().st_size > limits.max_text_upload_bytes:
+        raise ResourceLimitExceeded("Input exceeds MAX_TEXT_UPLOAD_BYTES")
     suffix = file_path.suffix.lower()
     if suffix == ".epub":
         return extract_text_from_epub(file_path)
@@ -233,9 +268,9 @@ def read_input_text(file_path: Path) -> str:
         # Try reading as UTF-8 first, fallback to ignore errors if it fails
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                return f.read()
+                return check_text(f.read(limits.max_text_chars + 1))
         except UnicodeDecodeError:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()
+                return check_text(f.read(limits.max_text_chars + 1))
 
 
