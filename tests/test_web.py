@@ -6,7 +6,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from src.core.auth import hash_password, verify_password
-from src.web import app, db, get_audio, verify_session, get_cache_key, run_generation_pipeline
+from src.web import app, db, get_audio, verify_session, run_generation_pipeline
+from src.core.cache_identity import get_cache_key
 
 # Bypass authentication by default in tests
 app.dependency_overrides[verify_session] = lambda: "session-id"
@@ -374,7 +375,7 @@ async def test_background_purger(tmp_path):
     conn = db._get_connection()
     try:
         with conn:
-            conn.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (time.time() - 90000, task_id))
+            conn.execute("UPDATE tasks SET status='Failed', finished_at = ? WHERE id = ?", (time.time() - 90000, task_id))
     finally:
         conn.close()
         
@@ -574,9 +575,7 @@ async def test_run_generation_pipeline_translation_model(tmp_path):
     with patch("src.web.MistralTTSClient") as mock_client_cls, \
          patch("src.web.get_tts_client") as mock_get_tts, \
          patch("src.web.AudioCompiler"), \
-         patch("src.core.epub_parser.read_input_text", return_value="Hello world"), \
-         patch("src.web.save_manifest"), \
-         patch("src.web.load_manifest", return_value={"chunks": [], "completed": []}), \
+         patch("src.core.pipeline.read_input_text", return_value="Hello world"), \
          patch("src.web.TextSplitter") as mock_splitter:
 
         mock_client = MagicMock()
@@ -632,9 +631,7 @@ async def test_run_generation_pipeline_with_text_file_data():
 
     with patch("src.web.get_tts_client") as mock_get_tts, \
          patch("src.web.AudioCompiler") as mock_compiler_cls, \
-         patch("src.core.epub_parser.read_input_text", return_value=chunk_text), \
-         patch("src.web.save_manifest"), \
-         patch("src.web.load_manifest", return_value={"chunks": [], "completed": []}), \
+         patch("src.core.pipeline.read_input_text", return_value=chunk_text), \
          patch("src.web.TextSplitter") as mock_splitter:
 
         mock_tts = MagicMock()

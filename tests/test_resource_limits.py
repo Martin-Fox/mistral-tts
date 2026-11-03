@@ -286,6 +286,21 @@ def test_malformed_epub_rejected_without_pipeline(limited_web):
     web.db.create_task.assert_not_called()
 
 
+def test_known_upload_budget_is_rechecked_before_saving_task(limited_web, monkeypatch):
+    from src.core.storage_retention import StorageBudgetExceeded
+    client, pipeline = limited_web
+    budget = Mock(side_effect=[None, StorageBudgetExceeded('Not enough room for input copies')])
+    monkeypatch.setattr(web, 'check_storage_budget', budget)
+    saved = Mock()
+    monkeypatch.setattr(web, 'save_job', saved)
+    response = client.post('/api/generate', data={'api_key': 'fake-key', 'text_content': 'hello'})
+    assert response.status_code == 507
+    assert budget.call_args.kwargs['additional_bytes'] == 10
+    web.db.create_task.assert_not_called()
+    pipeline.assert_not_called()
+    saved.assert_not_called()
+
+
 def test_failed_background_work_releases_worker_and_admission(limited_web, monkeypatch):
     client, pipeline = limited_web
     monkeypatch.setattr(web, 'job_controller', JobController(1, 0))

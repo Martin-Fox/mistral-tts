@@ -1,0 +1,31 @@
+# Compatibility baseline for indirect dependencies, validated with CPython 3.11.
+# Direct dependencies live in requirements*.in. Review changes before recompiling.
+# CA certificates and IDNA are deliberately locked by the generated outputs only.
+annotated-doc==0.0.4
+annotated-types==0.7.0
+click==8.4.1
+eval-type-backport==0.4.0
+h11==0.16.0
+httpcore==1.0.9
+importlib-metadata==8.7.1
+iniconfig==2.3.0
+jsonpath-python==1.1.6
+linkify-it-py==2.1.0
+loguru==0.7.3
+markdown-it-py==4.2.0
+mdit-py-plugins==0.6.1
+mdurl==0.1.2
+opentelemetry-api==1.39.1
+opentelemetry-semantic-conventions==0.60b1
+packaging==26.2
+platformdirs==4.10.0
+pluggy==1.6.0
+pydantic-core==2.46.4
+pygments==2.20.0
+python-dateutil==2.9.0.post0
+six==1.16.0
+standard-imghdr==3.13.0
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+uc-micro-py==2.0.0
+zipp==4.1.0

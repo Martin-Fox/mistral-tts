@@ -1,10 +1,10 @@
 import zipfile
-import re
 import logging
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import urllib.parse
+from src.core.text_decoding import decode_text
 from src.core.resource_limits import ResourceLimits, ResourceLimitExceeded, check_text
 
 logger = logging.getLogger(__name__)
@@ -22,22 +22,24 @@ class HTMLTextExtractor(HTMLParser):
         self.tag_stack = []
 
     def handle_starttag(self, tag, attrs):
-        self.tag_stack.append(tag)
-        self.current_tag = tag
+        if tag not in {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}:
+            self.tag_stack.append(tag)
+        self.current_tag = self.tag_stack[-1] if self.tag_stack else ""
         # Add newlines before block-level elements
         if tag in {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "br", "li", "tr", "blockquote"}:
             self.result.append("\n")
 
     def handle_endtag(self, tag):
-        if self.tag_stack:
-            self.tag_stack.pop()
+        if tag in self.tag_stack:
+            index = len(self.tag_stack) - 1 - self.tag_stack[::-1].index(tag)
+            del self.tag_stack[index:]
         self.current_tag = self.tag_stack[-1] if self.tag_stack else ""
         # Add newlines after block-level elements
         if tag in {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "blockquote"}:
             self.result.append("\n")
 
     def handle_data(self, data):
-        if self.current_tag not in self.ignored_tags:
+        if not any(tag in self.ignored_tags for tag in self.tag_stack):
             self.result.append(data)
 
     def get_text(self) -> str:
@@ -54,16 +56,15 @@ def strip_namespaces(xml_content: bytes) -> str:
     """
     Strips XML namespaces and tag prefixes to simplify parsing.
     """
-    xml_str = xml_content.decode("utf-8", errors="ignore")
-    # Remove default xmlns="..."
-    xml_str = re.sub(r'\sxmlns="[^"]+"', '', xml_str)
-    # Remove prefixed xmlns:prefix="..."
-    xml_str = re.sub(r'\sxmlns:\w+="[^"]+"', '', xml_str)
-    # Remove namespace prefixes from tags: <prefix:tag ...> to <tag ...>
-    xml_str = re.sub(r'<[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1', xml_str)
-    # Remove namespace prefixes from closing tags: </prefix:tag> to </tag>
-    xml_str = re.sub(r'</[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)>', r'</\1>', xml_str)
-    return xml_str
+    try:
+        root = ET.fromstring(xml_content)
+    except (ET.ParseError, LookupError, UnicodeError) as error:
+        raise ValueError("Invalid EPUB XML metadata or encoding") from error
+    for element in root.iter():
+        if isinstance(element.tag, str):
+            element.tag = element.tag.split('}')[-1]
+    return ET.tostring(root, encoding='unicode')
+
 
 def extract_text_from_epub(epub_path: Path) -> str:
     """
@@ -108,7 +109,7 @@ def extract_text_from_epub(epub_path: Path) -> str:
             raise ValueError("Invalid EPUB file: Could not find rootfile in container.xml")
 
         opf_path_str = rootfile_elem.attrib["full-path"]
-        opf_path = Path(opf_path_str)
+        opf_path = PurePosixPath(opf_path_str)
         opf_dir = opf_path.parent
         
         # 2. Read and parse the OPF file
@@ -142,8 +143,9 @@ def extract_text_from_epub(epub_path: Path) -> str:
         for itemref in spine_elem:
             if itemref.tag == "itemref":
                 idref = itemref.attrib.get("idref")
-                if idref:
-                    spine.append(idref)
+                if not idref:
+                    raise ValueError("EPUB spine item is missing idref")
+                spine.append(idref)
 
         # 3. Extract and parse HTML files in reading order
         full_text = []
@@ -152,7 +154,8 @@ def extract_text_from_epub(epub_path: Path) -> str:
         for item_id in spine:
             href = manifest.get(item_id)
             if not href:
-                continue
+                raise ValueError(f"EPUB spine references missing manifest item: {item_id}")
+            href = href.split("#", 1)[0]
             
             # Reconstruct the internal path relative to the OPF file directory
             if opf_dir == Path(".") or not opf_dir.name:
@@ -179,11 +182,10 @@ def extract_text_from_epub(epub_path: Path) -> str:
                 try:
                     html_bytes = read_member(unescaped_path)
                 except KeyError:
-                    logger.warning(f"Could not find manifest item '{item_id}' at path '{target_path}' inside EPUB archive.")
-                    continue
+                    raise ValueError(f"EPUB chapter is missing: {item_id} ({target_path})") from None
 
             # Parse and extract text from HTML content
-            html_content = html_bytes.decode("utf-8", errors="ignore")
+            html_content = decode_text(html_bytes, markup=True)
             extractor = HTMLTextExtractor()
             extractor.feed(html_content)
             extracted_text = extractor.get_text()
@@ -198,7 +200,7 @@ def extract_text_from_epub(epub_path: Path) -> str:
 
         return "\n\n".join(full_text)
 
-def extract_text_from_mobi(mobi_path: Path) -> str:
+def extract_text_from_mobi(mobi_path: Path, encoding=None) -> str:
     """
     Extracts and merges all text content from an unencrypted MOBI file
     using the mobi library and our HTML parser.
@@ -225,14 +227,12 @@ def extract_text_from_mobi(mobi_path: Path) -> str:
             raise ResourceLimitExceeded("Extracted MOBI content exceeds MAX_EPUB_BYTES")
         suffix = filepath.suffix.lower()
         if suffix in {".html", ".xhtml", ".htm"}:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                html_content = f.read(limits.max_epub_bytes + 1)
+            html_content = decode_text(filepath.read_bytes(), markup=True)
             extractor = HTMLTextExtractor()
             extractor.feed(html_content)
             text = extractor.get_text()
         else:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read(limits.max_text_chars + 1)
+            text = decode_text(filepath.read_bytes(), encoding)
 
         if not text.strip():
             raise ValueError("MOBI file contains no readable text content.")
@@ -251,7 +251,7 @@ def extract_text_from_mobi(mobi_path: Path) -> str:
             except Exception as e:
                 logger.warning(f"Failed to delete temporary MOBI extraction directory {tempdir}: {e}")
 
-def read_input_text(file_path: Path) -> str:
+def read_input_text(file_path: Path, encoding=None) -> str:
     """
     Reads the text content of a file. Supports .epub, .mobi, and defaults to plain text.
     Handles encoding issues robustly.
@@ -263,14 +263,10 @@ def read_input_text(file_path: Path) -> str:
     if suffix == ".epub":
         return extract_text_from_epub(file_path)
     elif suffix == ".mobi":
-        return extract_text_from_mobi(file_path)
+        return extract_text_from_mobi(file_path, encoding=encoding)
     else:
-        # Try reading as UTF-8 first, fallback to ignore errors if it fails
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return check_text(f.read(limits.max_text_chars + 1))
-        except UnicodeDecodeError:
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                return check_text(f.read(limits.max_text_chars + 1))
-
-
+        with file_path.open('rb') as stream:
+            data = stream.read(limits.max_text_upload_bytes + 1)
+        if len(data) > limits.max_text_upload_bytes:
+            raise ResourceLimitExceeded("Input exceeds MAX_TEXT_UPLOAD_BYTES")
+        return check_text(decode_text(data, encoding))

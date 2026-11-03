@@ -44,6 +44,10 @@ mistral-tts/
 │   │   └── openai_client.py   # OpenAI TTS client implementation
 │   ├── core/
 │   │   ├── audio_compiler.py  # FFmpeg stitching, pause injection, loudnorm, validation
+│   │   ├── audio_cache.py     # Shared CLI/WebUI/TUI manifest, chunk validation and resume
+│   │   ├── cache_identity.py  # Canonical identity of text, voices, models and segmentation
+│   │   ├── cache_io.py        # Cross-process locks and atomic file publication
+│   │   ├── pipeline.py        # Shared preparation/generation service with progress callbacks
 │   │   ├── config.py          # Translation model configuration and .env persistence
 │   │   ├── epub_parser.py     # Parser for EPUB, MOBI, and plain text
 │   │   ├── task_db.py         # SQLite persistent state management
@@ -74,7 +78,11 @@ mistral-tts/
 ├── Dockerfile                 # Multi-stage container configuration
 ├── LICENSE                    # MIT License
 ├── README.md                  # Main project documentation
-└── requirements.txt           # Application Python dependencies
+├── requirements.in            # Direct runtime dependencies
+├── requirements-dev.in        # Development tools and test dependencies
+├── constraints.txt            # Indirect-dependency compatibility baseline
+├── requirements.txt           # Compiled runtime pins and artifact hashes
+└── requirements-dev.txt       # Compiled development pins and artifact hashes
 
 ### Data flow
 [Input Text (.txt/.srt/.epub/.mobi)]
@@ -100,7 +108,7 @@ mistral-tts/
 - **API Payload Constraints:** Individual text chunks must strictly adhere to Mistral and OpenAI API character/token limits.
 - **Local System Dependencies:** Requires **FFmpeg** and **ffprobe** installed in the system PATH.
 - **Audio Completeness Guarantee:** Compilation must verify chunk audio integrity, pad trailing silence (1.0s default) to protect `loudnorm` filter buffers, and verify final duration against probed chunk totals within a 4.0s tolerance.
-- **SDK Compatibility:** Dependent on `mistralai` SDK version 2.4.9+ and `openai` SDK.
+- **SDK Compatibility:** The dependency locks retain `mistralai==2.4.9`; OpenAI TTS uses HTTPX directly and does not require the OpenAI SDK. Regenerate and verify both dependency locks when updating versions.
 
 ---
 

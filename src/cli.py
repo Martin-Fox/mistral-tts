@@ -1,6 +1,5 @@
 import asyncio
 import argparse
-import json
 import logging
 import os
 from pathlib import Path
@@ -11,12 +10,12 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich.panel import Panel
 from rich.logging import RichHandler
 from src.core.text_splitter import TextSplitter
-from src.core.cache_identity import get_cache_key, hash_sample_file
 from src.core.config import get_translation_model
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
-from src.core.cache_io import cache_lock, save_json_atomic, generate_chunk_atomic, run_blocking_until_done
+from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
+from src.core.storage_retention import check_storage_budget
 
 # Configure Rich logging
 logging.basicConfig(
@@ -48,20 +47,6 @@ class BooksmithCLI:
         if value.parent != self.base_cache_dir:
             self.base_cache_dir = value
 
-    def load_manifest(self) -> dict:
-        if self.manifest_path and self.manifest_path.exists():
-            try:
-                with open(self.manifest_path, "r") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {"chunks": [], "completed": []}
-
-    def save_manifest(self, manifest: dict):
-        if not self.manifest_path:
-            return
-        save_json_atomic(self.manifest_path, manifest)
-
     async def run(
         self,
         text_path: Path,
@@ -73,6 +58,7 @@ class BooksmithCLI:
         openai_key: Optional[str] = None
     ):
         console.print(Panel.fit("Mistral-TTS-Booksmith", style="bold magenta"))
+        await asyncio.to_thread(check_storage_budget)
 
         engine = engine.strip().lower()
         # Resolve the correct TTS API key and get client
@@ -82,133 +68,62 @@ class BooksmithCLI:
         
         client = get_tts_client(engine, tts_api_key)
 
-        from src.core.epub_parser import read_input_text
-        original_text = read_input_text(text_path)
         effective_translation_model = get_translation_model() if target_lang else None
 
-        # 0. Translate text if target language is specified
-        if target_lang:
+        async def translate(path, source, target, model):
             if not self.api_key:
                 raise ValueError("Mistral API key is required for translation.")
-            source = source_lang or "English"
-            with console.status(f"[bold blue]Translating text from {source} to {target_lang}..."):
-                translation_client = MistralTTSClient(api_key=self.api_key, translation_model=effective_translation_model)
-                text_path = await translation_client.translate_file(text_path, source, target_lang)
-                logger.info(f"Translation completed. Translated file: {text_path}")
+            translation_client = MistralTTSClient(api_key=self.api_key, translation_model=model)
+            translated = await translation_client.translate_file(path, source, target)
+            logger.info(f"Translation completed. Translated file: {translated}")
+            return translated
 
-        # 1. Read input text
-        with console.status("[bold green]Reading input text..."):
-            text = read_input_text(text_path) if target_lang else original_text
-            # 2. Split text
-            chunks = self.splitter.split(text)
-            total_chars = sum(len(c) for c in chunks)
-            logger.info(f"Text split into {len(chunks)} semantic chunks (total characters: {total_chars}).")
+        with console.status("[bold green]Reading input text...") as status:
+            def input_progress(event):
+                if event.stage == 'Translating':
+                    status.update(f"[bold blue]Translating text from {source_lang or 'English'} to {target_lang}...")
+                elif event.stage == 'Splitting Text':
+                    status.update("[bold green]Splitting text...")
+                elif event.stage == 'Text Ready':
+                    logger.info(f"Text split into {event.total} semantic chunks (total characters: {event.characters}).")
+            prepared = await prepare_text(
+                text_path, splitter=self.splitter, source_lang=source_lang, target_lang=target_lang,
+                translation_model=effective_translation_model, translate=translate, progress=input_progress)
 
-        # 3. Configure voice
         voice_str = str(voice_path).strip() if voice_path else ""
         voice_provided = bool(voice_str and voice_str != ".")
+        reference = voice_path if voice_provided and voice_path.exists() else None
+        voice = VoiceInput(voice_id=voice_str if voice_provided else None, reference=reference)
 
-        sample_hash = None
-        voice_id = None
-        if engine == "openai":
-            if voice_provided and voice_path.exists():
-                raise ValueError("OpenAI TTS does not support voice cloning. Please select an OpenAI preset voice instead.")
-            voice_id = voice_str if voice_provided else "alloy"
-            client.set_voice_id(voice_id)
-        elif engine == "mistral":
-            if voice_provided and voice_path.exists():
-                sample_hash = hash_sample_file(voice_path)
-                with console.status("[bold cyan]Cloning voice profile..."):
-                    await client.clone_voice(voice_path)
-                    logger.info("Voice profile cloned successfully.")
-            else:
-                voice_id = voice_str if voice_provided else "en_paul_neutral"
-                client.set_voice_id(voice_id)
+        def cache_ready(directory):
+            self.cache_dir = directory
+            self.manifest_path = directory / "manifest.json"
 
-        cache_key = get_cache_key(
-            original_text, voice_id, None, None,
-            source_lang, target_lang, effective_translation_model,
-            engine=engine, tts_model=client.model, voice_sample_hash=sample_hash,
-            max_chars=self.splitter.max_chars,
-        )
-        self.cache_dir = self.base_cache_dir / cache_key
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.manifest_path = self.cache_dir / "manifest.json"
-
-        logger.info("Waiting for exclusive access to the audio cache...")
-        async with cache_lock(self.cache_dir):
-            # 4. Process chunks with progress bar
-            manifest = self.load_manifest()
-            cached_chunks = manifest.get("chunks", [])
-            if not isinstance(cached_chunks, list):
-                cached_chunks = []
-            completed = manifest.get("completed", [])
-            if not isinstance(completed, list):
-                completed = []
-            # Invalidate stale completion markers before publishing the new text list.
-            # Otherwise an interrupted regeneration could reuse old audio on resume.
-            manifest["completed"] = [
-                f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
-                if i < len(cached_chunks) and cached_chunks[i] == chunk
-                and f"chunk_{i:04d}.mp3" in completed
-                and (self.cache_dir / f"chunk_{i:04d}.mp3").exists()
-                and (self.cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
-            ]
-            manifest["chunks"] = chunks
-            self.save_manifest(manifest)
-
-            chunk_files = []
-        
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeRemainingColumn(),
-                console=console
-            ) as progress:
-                task = progress.add_task("[cyan]Generating audio chunks...", total=len(chunks))
-            
-                for i, chunk in enumerate(chunks):
-                    chunk_filename = f"chunk_{i:04d}.mp3"
-                    chunk_path = self.cache_dir / chunk_filename
-                    chunk_files.append(chunk_path)
-
-                    if (
-                        chunk_filename in manifest.get("completed", [])
-                        and chunk_path.exists()
-                        and chunk_path.stat().st_size > 100
-                    ):
-                        progress.advance(task)
-                        continue
-
-                    await generate_chunk_atomic(client, chunk, chunk_path)
-                    if "completed" not in manifest:
-                        manifest["completed"] = []
-                    if chunk_filename not in manifest["completed"]:
-                        manifest["completed"].append(chunk_filename)
-                    self.save_manifest(manifest)
+        with Progress(
+            SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(),
+            TaskProgressColumn(), TimeRemainingColumn(), console=console
+        ) as progress:
+            task = progress.add_task("[cyan]Configuring voice...", total=None)
+            def report(event):
+                if event.stage == 'Waiting for Cache':
+                    logger.info("Waiting for exclusive access to the audio cache...")
+                    progress.update(task, description="[cyan]Waiting for cache...")
+                elif event.stage == 'Generating Audio':
+                    progress.update(task, total=event.total, description="[cyan]Generating audio chunks...")
+                elif event.stage == 'Chunk Ready':
                     progress.advance(task)
+                elif event.stage == 'Compiling Audiobook':
+                    progress.update(task, description="[yellow]Compiling final audiobook...")
+            result = await run_pipeline(
+                prepared, client=client, engine=engine, voice=voice, output_path=output_path,
+                compiler_factory=lambda: self.compiler, cache_root=self.base_cache_dir,
+                progress=report, cache_ready=cache_ready)
+        logger.info(
+            f"Audiobook compilation verified: duration {result.compilation.get('output_duration', 0):.2f}s "
+            f"(expected ~{result.compilation.get('expected_duration', 0):.2f}s across {result.chunk_count} chunks).")
+        console.print(Panel(f"[bold green]Success![/bold green] Audiobook saved to: [underline]{output_path}[/underline]"))
 
-            # 5. Verify and compile final audiobook
-            if len(chunk_files) != len(chunks):
-                raise RuntimeError(f"Chunk count mismatch: expected {len(chunks)}, got {len(chunk_files)} files.")
-            for idx, cf in enumerate(chunk_files):
-                if not cf.exists() or cf.stat().st_size <= 100:
-                    raise RuntimeError(
-                        f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{len(chunks)})"
-                    )
-
-            with console.status("[bold yellow]Compiling final audiobook..."):
-                compilation_meta = await run_blocking_until_done(self.compiler.compile, chunk_files, output_path)
-                logger.info(
-                    f"Audiobook compilation verified: duration {compilation_meta.get('output_duration', 0):.2f}s "
-                    f"(expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {len(chunk_files)} chunks)."
-                )
-            
-            console.print(Panel(f"[bold green]Success![/bold green] Audiobook saved to: [underline]{output_path}[/underline]"))
-
-async def main():
+async def main() -> int:
     load_dotenv()
     
     parser = argparse.ArgumentParser(description="Mistral-TTS-Booksmith CLI")
@@ -231,7 +146,7 @@ async def main():
         from src.tui import BooksmithTUI
         app = BooksmithTUI()
         await app.run_async()
-        return
+        return 0
 
     # Update arguments validation
     if not args.text or not args.output:
@@ -244,8 +159,8 @@ async def main():
         if not mistral_key:
             parser.error("Mistral API key is required when using the mistral engine. Use --api-key or set MISTRAL_API_KEY.")
 
-    cli = BooksmithCLI(api_key=mistral_key.strip() if mistral_key else "")
     try:
+        cli = BooksmithCLI(api_key=mistral_key.strip() if mistral_key else "")
         await cli.run(
             Path(args.text.strip()), 
             Path(args.voice.strip() if args.voice else ""), 
@@ -257,6 +172,8 @@ async def main():
         )
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
+        return 1
+    return 0
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

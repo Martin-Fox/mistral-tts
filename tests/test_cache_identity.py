@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src import cli as cli_module, web
+from src import cli as cli_module, web, tui
 from src.core import cache_identity
 from src.core.cache_identity import get_cache_key, hash_sample_file
 
@@ -89,7 +89,7 @@ def pipelines(tmp_path, monkeypatch):
     client.generate_audio = AsyncMock(side_effect=generate)
     translation_factory = Mock(side_effect=lambda **kwargs: Mock(
         translate_file=AsyncMock(return_value=translated)))
-    for module in (web, cli_module):
+    for module in (web, cli_module, tui):
         monkeypatch.setattr(module, 'get_tts_client', Mock(return_value=client))
         monkeypatch.setattr(module, 'AudioCompiler', Mock(return_value=compiler))
         monkeypatch.setattr(module, 'MistralTTSClient', translation_factory)
@@ -97,34 +97,46 @@ def pipelines(tmp_path, monkeypatch):
     monkeypatch.setattr(web, 'db', Mock())
 
     def run(interface, engine='mistral', voice='voice', sample=None, target=None):
+        compilations_before = compiler.compile.call_count
         if interface == 'cli':
             runner = cli_module.BooksmithCLI('fake-key')
             asyncio.run(runner.run(text_path, sample or Path(voice), tmp_path / 'book.mp3',
                                    target_lang=target, engine=engine, openai_key='fake-key'))
+        elif interface == 'tui':
+            app = tui.BooksmithTUI()
+            app.query_one = Mock()
+            app.log_message = Mock()
+            asyncio.run(app.process_book(str(text_path), str(sample) if sample else '', voice,
+                                         str(tmp_path / 'book.mp3'), 'fake-key', target_lang=target or '',
+                                         engine=engine, openai_key='fake-key'))
+            assert not any(str(call.args[0]).startswith('Error:') for call in app.log_message.call_args_list)
         else:
             asyncio.run(web.run_generation_pipeline(
                 'test-task', 'fake-key', 'book text', None,
                 (sample.name, sample.read_bytes()) if sample else None,
                 voice, None, None, target, 'book.mp3', engine=engine, openai_key='fake-key',
             ))
+        assert compiler.compile.call_count == compilations_before + 1
         return compiler.compile.call_args.args[0][0].parent.resolve()
 
     return run, generated, client, translation_factory
 
 
-def test_cli_and_web_share_identity_for_presets_and_samples(pipelines, tmp_path):
+def test_interfaces_share_identity_for_presets_and_samples(pipelines, tmp_path):
     run, generated, _, _ = pipelines
     first = run('cli')
     assert run('web') == first
+    assert run('tui') == first
     assert len(generated) == 1
     sample = tmp_path / 'voice.wav'
     sample.write_bytes(b'same-reference-audio')
     cloned = run('cli', sample=sample)
     assert run('web', sample=sample) == cloned
+    assert run('tui', sample=sample) == cloned
     assert len(generated) == 2
 
 
-@pytest.mark.parametrize('interface', ['cli', 'web'])
+@pytest.mark.parametrize('interface', ['cli', 'web', 'tui'])
 def test_engine_model_and_changed_sample_regenerate_audio(pipelines, tmp_path, interface):
     run, generated, client, _ = pipelines
     first = run(interface)
@@ -139,15 +151,16 @@ def test_engine_model_and_changed_sample_regenerate_audio(pipelines, tmp_path, i
     assert len(generated) == 5
 
 
-def test_cli_and_web_use_same_resolved_translation_model(pipelines):
+def test_interfaces_use_same_resolved_translation_model(pipelines):
     run, generated, _, translations = pipelines
     first = run('cli', target='Polish')
     assert run('web', target='Polish') == first
+    assert run('tui', target='Polish') == first
     assert len(generated) == 1
     assert all(call.kwargs['translation_model'] == 'configured-model' for call in translations.call_args_list)
 
 
-@pytest.mark.parametrize('interface', ['cli', 'web'])
+@pytest.mark.parametrize('interface', ['cli', 'web', 'tui'])
 def test_legacy_cache_is_not_reused_or_removed(pipelines, tmp_path, interface):
     run, generated, _, _ = pipelines
     legacy_hash = hashlib.sha256(b'book textvoice').hexdigest()
@@ -164,11 +177,11 @@ def test_legacy_cache_is_not_reused_or_removed(pipelines, tmp_path, interface):
     assert (legacy / 'chunk_0000.mp3').read_bytes() == b'old-audio' * 100
 
 
-@pytest.mark.parametrize('interface', ['cli', 'web'])
+@pytest.mark.parametrize('interface', ['cli', 'web', 'tui'])
 def test_configured_translation_model_change_regenerates_audio(pipelines, monkeypatch, interface):
     run, generated, _, translations = pipelines
     first = run(interface, target='Polish')
-    module = cli_module if interface == 'cli' else web
+    module = {'cli': cli_module, 'web': web, 'tui': tui}[interface]
     monkeypatch.setattr(module, 'get_translation_model', lambda: 'new-configured-model')
     assert run(interface, target='Polish') != first
     assert generated == ['translated text', 'translated text']

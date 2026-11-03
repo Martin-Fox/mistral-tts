@@ -2,7 +2,7 @@ import re
 from typing import List
 
 # Bump when segmentation semantics change in a way that invalidates cached audio.
-SPLITTER_VERSION = 1
+SPLITTER_VERSION = 2
 
 class TextSplitter:
     """
@@ -20,6 +20,8 @@ class TextSplitter:
                              Mistral API typically has limits, and staying below
                              helps with stability.
         """
+        if not isinstance(max_chars, int) or isinstance(max_chars, bool) or max_chars < 1:
+            raise ValueError("max_chars must be a positive integer")
         self.max_chars = max_chars
 
     def _is_srt(self, text: str) -> bool:
@@ -82,7 +84,7 @@ class TextSplitter:
 
         return " ".join(text_pieces).strip()
 
-    def split(self, text: str) -> List[str]:
+    def split(self, text: str, *, extract_srt: bool = True) -> List[str]:
         """
         Splits the input text into a list of semantic chunks respecting max_chars.
         Automatically detects and extracts SRT subtitles, normalizes whitespace, splits
@@ -98,7 +100,7 @@ class TextSplitter:
         if not text or not text.strip():
             return []
 
-        if self._is_srt(text):
+        if extract_srt and self._is_srt(text):
             text = self.extract_text_from_srt(text)
 
         # Normalize whitespace without dropping trailing text lacking punctuation
@@ -150,7 +152,8 @@ class TextSplitter:
                 else:
                     current_chunk = sentence
             else:
-                chunks.append(current_chunk.strip())
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
                 current_chunk = sentence
 
         if current_chunk and current_chunk.strip():
