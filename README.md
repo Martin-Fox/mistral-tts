@@ -39,8 +39,12 @@ An automated, open-source text-to-speech pipeline designed to transform long-for
 
 2. Install dependencies:
    ```bash
-   pip install -r requirements.txt
+   python -m pip install --require-hashes --only-binary=:all: -r requirements.txt
    ```
+
+   Use an isolated Python environment. This installs runtime dependencies only;
+   development tools and the lock update procedure are described in
+   [Dependency management](docs/DEPENDENCIES.md).
 
 3. (Optional) Configure environment variables:
    Create a `.env` file in the root directory to set your API Keys and optional WebUI credentials:
@@ -92,6 +96,11 @@ python3 src/cli.py --text <path_to_text_file> \
 ```
 
 *Note: If `MISTRAL_API_KEY` is set in your `.env` file, the `--api-key` flag is optional.*
+
+CLI exit codes: `0` after a successful run (or `--help`), `1` for an execution
+error such as a missing input file, failed generation or failed compilation,
+and `2` for invalid or missing arguments. Automation should check the exit code
+before treating the output as a completed audiobook.
 
 ### OpenAI TTS Integration
 
@@ -154,10 +163,13 @@ When `--target-lang` is specified, the pipeline translates the input text via th
 
 ### Running Tests
 
-To run the automated test suite and verify the integrity of core modules, the translation pipeline, and the WebUI backend:
+Install the development lock before running tests in a disposable checkout with
+throwaway storage and configuration. Shared storage/environment isolation is
+tracked in audit P20; the current suite must not use a live application's data.
 
 ```bash
-PYTHONPATH=. pytest
+python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
+python -m pytest
 ```
 
 ## 🎙️ Models & Account Tiers
@@ -324,7 +336,7 @@ docker run --rm \
 - [ ] **CLI User Management:** Add command-line interface options to create, update, and manage user accounts securely, keeping user-creation tools out of the WebUI.
 - [ ] **WebUI About Modal & Current Version Display:** Add a menu item / modal for "About" that displays application metadata, current version (e.g. 1.0.2), license, and project links.
 - [ ] **WebUI Help / Quick Guide:** Interactive help or documentation drawer/modal explaining parameters (chunking, temperature, voices, engines, loudnorm) and troubleshooting tips.
-- [x] **Robust Task State Management:** Implement a background cleanup task that runs periodically to evict all tasks older than 24 hours regardless of their state, or transition the global in-memory state tracking to a SQLite database.
+- [x] **Robust Task State Management:** SQLite task state, explicit restart recovery and conservative storage retention protect active/resumable jobs.
 - [x] **EPUB Support:** Ingest and parse EPUB files to extract chapters while preserving document structure.
 - [x] **MOBI Support:** Ingest and parse MOBI files to extract chapters for synthesis.
 - [x] **OpenAI TTS Integration:** Add support for the OpenAI TTS API as an alternative synthesis engine, enabling voice options for languages not natively supported by Mistral (such as Polish).
@@ -394,9 +406,9 @@ prevent clients from bypassing that proxy. Never trust arbitrary forwarded heade
 (`--forwarded-allow-ips='*'`) on an exposed listener. Without trusted forwarding,
 users behind one proxy/NAT share the source allowance. Configure TLS separately.
 
-### Audio cache v2 (CLI and WebUI)
+### Audio cache v2 (CLI, WebUI and TUI)
 
-CLI and WebUI now share `storage/cache/v2_<sha256>/`. The canonical identity
+CLI, WebUI and TUI share `storage/cache/v2_<sha256>/`. The canonical identity
 includes the parsed source text, effective TTS engine/model and voice, SHA-256 of
 reference audio bytes (not its path), effective translation languages/model, and
 text splitter version/character limit. API keys and output filenames are excluded.
@@ -408,13 +420,14 @@ changing the configured translation model creates a different cache directory.
 or automatically migrated. The first run with v2 may regenerate audio and incur
 API charges, even if old chunk files exist. Existing completed audiobook files
 are unaffected. Do not rename old cache directories to v2 names: their parameters
-cannot be reliably verified. Remove obsolete data manually only when it is no
-longer needed; this update does not perform cleanup.
+cannot be reliably verified. Legacy unversioned data remains outside automatic
+retention; remove it manually only when it is no longer needed.
 
 Translation may still run again on resubmission. The manifest checks the actual
 resulting segment text before reusing audio, so different translations do not
-silently reuse mismatched segments. Persisting translated results remains separate follow-up work. This shared cache change does
-not add manifest resume to the TUI.
+silently reuse mismatched segments. Explicit WebUI resume retains translated results/checkpoints as described below.
+CLI/TUI resubmission uses the same audio manifest but can repeat translation;
+it does not create a durable WebUI job or translation checkpoint.
 
 ### API keys in the WebUI
 
@@ -450,11 +463,11 @@ CLI and TUI retain the explicitly requested output path: a successful run replac
 that file atomically. Two CLI/TUI runs deliberately targeting the same path may
 still replace each other's completed result; choose different paths to keep both.
 FFmpeg concat lists support spaces, apostrophes and Unicode; paths containing
-line breaks are rejected. CLI/WebUI cache writers are coordinated as described below.
+line breaks are rejected. CLI/WebUI/TUI cache writers are coordinated as described below.
 
-### Concurrent CLI/WebUI cache access
+### Concurrent CLI/WebUI/TUI cache access
 
-CLI and WebUI take an exclusive OS file lock on each v2 cache directory before
+CLI, WebUI and TUI take an exclusive OS file lock on each v2 cache directory before
 reading/updating its manifest, generating segments, or compiling its audio.
 Identical jobs wait and then recheck completed segments; different cache keys
 have independent locks. The WebUI reports `Waiting for Cache` while waiting.
@@ -465,20 +478,21 @@ persistent `.cache.lock` file while jobs are running: removing it can split lock
 a finite positive number of seconds). A timeout fails the waiting job without
 starting chunk generation; it does not cancel the owner. Waiting is asynchronous.
 If compilation is cancelled, the lock is retained until its worker thread finishes
-reading the segments. Process/FFmpeg execution deadlines are separate work.
+reading the segments. FFmpeg/ffprobe deadlines are described below.
 
 Segments are generated into unique `.pending-*` files, validated by the client
 and checked for minimum size, then atomically published before the completion
 marker is saved. Manifests and translated text use unique temporary files too.
 Readers of a published path see the previous complete file or the new complete
 file. Exceptions/cancellation clean up unpublished files; forced process death
-may leave pending files, which are ignored during resume (retention is separate).
+may leave pending files, which are ignored during resume and covered by the
+conservative retention policy below when their containing artifact is eligible.
 
-These locks cover cooperating CLI/WebUI processes using the same local cache
+These locks cover cooperating CLI/WebUI/TUI processes using the same local cache
 filesystem. Network filesystems/multi-host shared storage have not been validated.
-Use separate BooksmithCLI instances for concurrent invocations. The TUI still
-uses its older cache layout; its migration is planned separately. Translation
-files with identical output names still use last-completed-writer-wins publication;
+Use separate BooksmithCLI instances for concurrent invocations. TUI jobs also
+use isolated cache sessions and hold their locks through compilation. CLI/TUI
+translation files with identical output names still use last-completed-writer-wins publication;
 this change prevents temporary-file collisions, not that naming policy.
 
 ### Resource limits and generation admission
@@ -512,7 +526,7 @@ HTTP `429` with `Retry-After: 5`, before reading their body. Admission includes
 uploads and preflight, so concurrent preflight work is bounded too. Accepted jobs
 may remain `Pending` while waiting for a worker. Capacity is released after work,
 exceptions, cancellation or client disconnect during upload. This is a bounded
-in-process queue, not durable restart/resume storage.
+in-process execution queue; restart requires explicit resume from saved inputs.
 
 The concurrency budget applies to this single WebUI process. Independent CLI/TUI
 processes do not share that worker budget, but their input parsing uses the same
@@ -521,3 +535,274 @@ repeated spine reads also consume the decompression budget. MOBI output size/tex
 are checked after extraction; the external MOBI library's extraction phase is
 not sandboxed or given an unpacking quota by this change. Configure reverse-proxy
 request-size and upload-timeout limits as well for network deployments.
+
+### Restart recovery and explicit resume (WebUI)
+
+On startup, unfinished database tasks become `Interrupted`; successful/failed
+terminal states are preserved. Progress streams report the interruption and end.
+The `finished_at` column is migrated automatically. Retention is a dry-run by default. When deletion is enabled, only completed
+tasks expire (24 hours after finish time by default); active, failed and
+interrupted tasks and their recovery files are preserved regardless of age. Legacy terminal records without a
+known finish time receive the migration time, preserving a full retention window.
+
+New WebUI jobs save private input files and an explicit parameter snapshot in
+`storage/tasks/<hash-of-task-id>/` before being queued. The snapshot contains the
+original text/ebook, reference audio, effective translation model, TTS model and
+segmentation version, **never client API keys**. Original inputs are hash-checked
+before resume. Changing global configuration does not change a saved job. Changes
+to the supported TTS model/segmentation version make old snapshots incompatible
+rather than silently changing their output. Back up the entire storage volume,
+not just `state.db`, and protect it because it contains source documents/audio.
+
+After login, the WebUI lists interrupted/failed resumable tasks. Enter API keys
+again in the existing key fields (or configure server-side keys), then click
+**Resume**. The authenticated endpoints are `GET /api/tasks` and
+`POST /api/resume/{task_id}` (form fields `api_key`, `openai_key`). Resume uses the
+same job ID and immutable parameters, the normal admission/worker limits and
+cache lock. Concurrent resume requests cannot both claim the same job; active or
+completed jobs return `409`. Missing/modified/incompatible inputs also return
+`409`; missing required keys return `400` without claiming the job.
+
+Completed translation responses/batches are checkpointed per job; the assembled
+translation is retained too. Resume reuses those checkpoints and audio segments
+marked completed in the matching manifest, and recompiles the output if needed.
+There is no automatic execution on restart. Old pre-snapshot jobs can be marked
+Interrupted but cannot be resumed without their original inputs; resubmit them.
+Completed history and recognized orphaned artifacts follow the state-aware
+retention policy described below; failed/interrupted snapshots are retained. API execution is not exactly-once: if the process dies after a
+provider responds but before the local checkpoint is committed, that request may
+need to be repeated. CLI/TUI keep their existing resubmission behavior.
+
+### FFmpeg/ffprobe budgets and voice preprocessing
+
+All application-owned FFmpeg/ffprobe calls now have finite timeouts. Configure
+finite positive values through the environment:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AUDIO_PROBE_TIMEOUT_SECONDS` | 30 | Base seconds for metadata/chunk probes and decoded-duration checks |
+| `AUDIO_PROCESS_TIMEOUT_SECONDS` | 120 | Base seconds for compilation, silence and denoising |
+| `AUDIO_TIMEOUT_FACTOR` | 0.1 | Additional wall-clock seconds per audio second for duration-aware operations |
+| `AUDIO_MAX_TIMEOUT_SECONDS` | 7200 | Maximum budget for one process |
+
+Compilation uses the expected segment/pause duration to extend its budget.
+Decoded-duration checks use a separately bounded ffprobe metadata hint; if that
+hint is unavailable they use the ordinary process budget. Metadata only sizes
+the timeout: final completeness is still checked by full FFmpeg decoding with
+the existing 4-second tolerance. Invalid timeout settings prevent WebUI startup.
+
+Timeouts stop and reap the direct child. Async cancellation also stops the child;
+async/threaded cancellation allows 2 seconds after terminate, then uses kill.
+WebUI, CLI and TUI compilation runs outside the event loop. Cancellation keeps
+WebUI/CLI/TUI cache locks and compiler workspaces until the compiler thread has stopped. The TUI remains
+responsive while compiling; Mistral chunk probing is asynchronous too.
+
+Voice denoising uses a private temporary file with a valid audio extension and
+never overwrites the user's original reference. Its processed bytes are reused
+for TTS requests; failure is logged with bounded FFmpeg stderr and falls back to
+the original reference. Cancellation propagates after child cleanup. The voice
+size limit also applies to local references and processed buffers.
+
+Reference-preprocessing version 2 and the processed-byte fingerprint distinguish
+filtered audio from fallback audio in the cache. Preset-voice cache identities
+remain unchanged. Previous cloned-voice cache entries are not reused and old
+cloned-voice resume snapshots are rejected as incompatible; resubmit those jobs
+to generate a consistent audiobook with the corrected preprocessing. This can
+incur new API charges. Native Windows process handling still needs its own smoke
+test; the process cleanup tests here were run on Linux.
+
+### API retries and deadlines
+
+Mistral TTS, translation (including SRT batches), model/voice listing and OpenAI
+TTS share one retry policy. Only network/transport errors, request timeouts and
+HTTP `408`, `429`, `5xx` are retried. Other `4xx`, invalid responses, filesystem
+errors and local FFmpeg/probe failures do not repeat the paid request. Truncated
+text responses are not retried unchanged; SRT may fall back once to individual
+cues when its batch response cannot be used. Mistral SDK internal retries are
+disabled, avoiding nested attempts.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `API_REQUEST_TIMEOUT_SECONDS` | 60 | Maximum duration of one request attempt |
+| `API_RETRY_BUDGET_SECONDS` | 180 | Total request/retry/backoff budget for one remote operation |
+| `API_RETRY_MAX_DELAY_SECONDS` | 60 | Maximum accepted wait between attempts |
+
+Values must be finite and positive; invalid settings prevent WebUI startup and
+client construction. A method's `retry_count` means maximum total attempts:
+3 by default for TTS/listing and 5 for translation. The budget is per operation,
+not for an entire book. Local processing uses the separate audio budgets.
+
+Backoff doubles from 1 second, or 15 seconds for `429` without usable Retry-After,
+with bounded positive jitter. Retry-After accepts seconds or an HTTP date and is
+respected as a minimum wait. If it exceeds the configured maximum delay, the
+request fails rather than retrying early. If a wait cannot fit the remaining
+operation budget, retry stops. Cancellation propagates without another attempt.
+
+Retry logs contain status/type/delay, not response bodies or Authorization values;
+provider HTTP errors are surfaced as sanitized status errors. Saved translation
+checkpoints still bypass completed remote work. Retrying a network timeout can
+repeat work already processed by the provider; exactly-once billing is not
+guaranteed. All regression tests use fake clients/responses, without paid calls.
+
+### Input text integrity and translation limits
+
+Plain text and SRT use strict UTF-8 by default. UTF-8, UTF-16 and UTF-32 BOMs
+are recognized automatically. For a legacy plain-text file, explicitly set
+`INPUT_TEXT_ENCODING=cp1250` (or another Python codec name), or convert it to
+UTF-8 before uploading. There is no guessing or silent removal of invalid bytes;
+a decode error stops the job. UTF-16 without a BOM needs an explicit byte order,
+for example `INPUT_TEXT_ENCODING=utf-16-le`. Uploaded file validation reports an
+invalid document before creating a task or calling the provider.
+
+EPUB XML respects its declared encoding; chapter HTML and extracted MOBI HTML
+respect BOMs and XML/HTML charset declarations, defaulting to UTF-8. Missing
+manifest references, spine IDs or chapter files fail the EPUB import, including
+when earlier chapters were readable. A partial book is not accepted as complete.
+
+Resume snapshots freeze the input encoding. Pasted WebUI text and translated
+output are always UTF-8, independent of the legacy input encoding setting.
+Translations split source text into at most 2500-character fragments, including
+long words and subtitle cues. SRT JSON batches also limit the serialized source
+payload to 2500 characters and 25 cues while preserving cue indices and timing.
+Prompt instructions add overhead; these character limits are conservative source
+budgets, not token counts. Empty/non-text results and malformed subtitle lists
+are rejected; unusable SRT batches fall back to validated individual cues.
+
+A truncated translation response is discarded. Its source can be split again
+(up to four levels, stopping at 64 characters); persistent truncation fails the
+job without replacing an existing complete translation. Output is checked against
+`MAX_TEXT_CHARS` as fragments arrive and before atomic publication. Splitting and
+SRT fallback can incur additional provider requests; they cannot guarantee the
+linguistic completeness of a model response that reports normal completion.
+
+Segmentation version 2 separates the corrected text pipeline from old audio
+cache identities. Old task snapshots are rejected as incompatible; resubmit them
+after upgrading. Existing output files remain available, but regeneration uses
+new cache entries and may incur API charges.
+
+### Storage retention and disk budgets
+
+The WebUI plans maintenance every 30 minutes. **Deletion is off by default**:
+logs report dry-run counts, and completed history remains until deletion is
+enabled. Failed/interrupted jobs are kept indefinitely, including their input,
+translation checkpoints and pinned audio cache. Active and queued jobs are also
+protected. Upgrading no longer expires resumable history after 24 hours.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `STORAGE_CLEANUP_ENABLED` | `false` | Enable periodic deletion (`true`/`false` or `1`/`0`) |
+| `STORAGE_RETENTION_SECONDS` | `86400` | Minimum age after completion and minimum artifact age for completed-job expiry |
+| `STORAGE_ORPHAN_GRACE_SECONDS` | `604800` | Minimum age of recognized orphaned artifacts and unpinned cache (7 days) |
+| `STORAGE_MAX_BYTES` | `0` | Optional logical-byte threshold under `storage`; 0 disables this threshold |
+| `STORAGE_MIN_FREE_BYTES` | `268435456` | Free-space reserve on the storage filesystem (256 MiB); 0 disables it |
+
+Before enabling automatic deletion, inspect the plan from the repository root:
+
+```bash
+python3 -m src.core.storage_retention --storage storage
+# Explicitly apply a freshly calculated plan after reviewing the policy:
+python3 -m src.core.storage_retention --storage storage --apply
+```
+
+The command defaults to read-only dry-run even if `STORAGE_CLEANUP_ENABLED=true`.
+It requires an existing, migrated `state.db` inside the selected storage root;
+it never creates or migrates a database. Dry-run reports relative artifact paths,
+logical bytes and completed task IDs, without file contents. Apply rechecks the
+current state and locks; it does not execute a previously saved report.
+
+Recognized artifacts are hashed WebUI job directories, UUID task scratch/output/
+translation names, v2 audio caches and `.compile-*` workspaces under storage.
+Completed job inputs, named outputs and translations can expire after the
+configured retention time. Their history/logs are removed only after those
+artifacts are gone. Back up or move audiobooks outside managed storage before
+enabling expiry if you want to keep them permanently. Orphaned artifacts and
+unpinned audio must pass the longer grace period. Fresh files in an otherwise
+old directory postpone cleanup. Cache pending files are removed with eligible
+cache contents; abandoned task workspaces and compiler workspaces are reclaimed.
+
+The sweeper skips symbolic links and unknown artifacts, including legacy flat TUI
+chunk layouts, arbitrary CLI output names and loose shared translation staging
+files whose owner cannot be proven. It never scans outside the selected root.
+A non-expired job without a valid cache-reference marker conservatively protects
+**all** v2 caches, including older snapshots until they are resumed. Failed jobs
+are not evicted to meet a disk threshold; archive unwanted jobs manually while
+the application is stopped. This deliberately favors recoverability over reclaiming
+the maximum possible space.
+
+A sweep takes an OS maintenance lock and acquires each cache/compiler lease
+without waiting. Busy resources are skipped. Cache `.cache.lock` files and their
+parent directories remain in place, preserving the lock inode for CLI/WebUI/TUI
+waiters. Compiler leases also protect CLI/TUI compilation inside storage. Deleting
+cache after its grace period can require paid regeneration on later resubmission.
+Native Windows cleanup still needs a platform smoke test; network filesystems
+and multi-host writers are not supported by these local-lock guarantees.
+
+When a disk threshold is reached, WebUI generate/resume requests return `507`
+before body parsing. Known uploaded-input copies are checked again before saving
+a new job or claiming resume. CLI/TUI check before generation; chunk generation,
+uncached translation requests and compilation recheck the budget as work proceeds.
+A failed check preserves existing snapshots/cache and makes no subsequent API
+call for that step. Full quota measurement counts logical file sizes, includes
+unknown files and refuses symbolic-link trees; it can add filesystem scanning
+cost when `STORAGE_MAX_BYTES` is enabled.
+
+These are admission/checkpoint thresholds, **not a hard filesystem quota**.
+Concurrent writers, in-flight responses and one compilation can exceed the byte
+threshold between checks, and outputs outside storage may use a different disk.
+Use a filesystem/container volume quota for a strict upper bound. Maintenance
+never discards protected recovery data to force usage below the threshold.
+
+### Shared cache contract and TUI migration
+
+`src/core/audio_cache.py` owns manifest loading, comparison of previous segment
+text, completed markers, file checks and atomic generation. CLI, WebUI and TUI
+use one locked session through final compilation. Only a segment with matching
+previous text, a completion marker and a regular non-symlink file larger than
+100 bytes can be reused. Malformed manifests or missing/invalid files trigger
+regeneration. File-size checks do not replace provider/probe and final decoded
+audio verification. The compiler receives all current segments in source order.
+
+TUI now uses the same `storage/cache/v2_<sha256>/` identity as CLI/WebUI, including
+source text before translation, the resolved translation model, reference bytes
+and processed-reference fingerprint. It resumes completed audio on resubmission
+and isolates different books/voices; simultaneous identical jobs wait for the
+same OS lock. CLI/WebUI cache identities and manifest format are unchanged by
+this consolidation.
+
+Old flat TUI `storage/cache/chunk_*.mp3` files remain untouched and are not reused:
+their source/voice cannot be verified. The first TUI run may therefore incur new
+API charges. Existing compatible v2 entries from CLI/WebUI can be reused. TUI
+has no durable job snapshot or translation checkpoints; rerun with the same input
+and settings after interruption. Changed translation text invalidates affected
+segments. Choose distinct output paths for independent audiobooks.
+
+### Pipeline service and interface adapters
+
+`src/core/pipeline.py` provides shared text preparation and audiobook generation.
+`prepare_text` reads input with the selected encoding, invokes an optional async
+translation adapter, reads translated UTF-8 text and splits it in source order.
+It freezes the effective translation model for the prepared job. `run_pipeline`
+configures a preset/reference voice, builds the existing cache identity, generates
+or reuses ordered segments and runs verified compilation under the cache lock.
+
+The service accepts synchronous progress callbacks, a cache-ready callback,
+an injected TTS client and a compiler factory. Callbacks run on the caller's event
+loop; callback errors propagate and stop the operation. Compilation stays in its
+cancellation-aware worker thread, retaining the cache lock until that worker has
+stopped. Results include the output path, cache directory, segment count and
+compiler verification metadata. The service imports neither FastAPI/Textual nor
+the provider SDKs; provider clients are supplied by the adapters.
+
+CLI owns Rich output and exit codes. TUI owns widgets, progress and voice/model
+error assistance. WebUI owns uploads, task state, UUID output names, durable
+input/translation checkpoints and temporary-input cleanup. Translation adapters
+keep those persistence differences explicit: CLI/TUI resubmission can still repeat
+translation, while WebUI resume reuses its saved results. Cache keys, manifests,
+API retry/deadline policy and output publication rules are unchanged by this
+extraction; there is no cache or task-snapshot migration for P18.
+
+Custom TTS clients must implement `BaseTTSClient.set_voice_id` alongside audio
+generation, voice listing and cloning. Preset selection clears a previous
+reference on reference-capable clients. Mistral supports reference input; OpenAI
+rejects cloning and uses preset voices. API credentials remain in runtime clients
+and adapter closures, outside prepared text, progress events and pipeline results.

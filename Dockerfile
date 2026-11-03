@@ -23,7 +23,7 @@ RUN chown appuser:appuser /app
 COPY --chown=appuser:appuser requirements.txt .
 
 # Install python packages
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.txt && pip check
 
 # Copy application source code and tests
 COPY --chown=appuser:appuser src/ ./src/

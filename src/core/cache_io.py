@@ -6,9 +6,12 @@ import errno
 import json
 import math
 import os
+import stat
 from pathlib import Path
 import tempfile
 import time
+import threading
+from src.core.process_runner import process_cancellation
 
 
 def _try_lock(stream):
@@ -19,6 +22,28 @@ def _try_lock(stream):
     else:
         import fcntl
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@contextmanager
+def try_directory_lock(directory: Path, name=".cache.lock"):
+    """Nonblocking lease for maintenance and private compiler workspaces."""
+    lock = directory / name
+    if directory.is_symlink() or lock.is_symlink():
+        raise ValueError("Refusing a symlinked lock directory/file")
+    if lock.exists() and (not stat.S_ISREG(lock.stat().st_mode) or lock.stat().st_nlink != 1):
+        raise ValueError("Lock must be an ordinary file with one link")
+    with lock.open("a+b") as stream:
+        if os.name == "nt" and stream.seek(0, os.SEEK_END) == 0:
+            stream.write(b"\0")
+            stream.flush()
+        try:
+            _try_lock(stream)
+        except OSError as error:
+            if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise
+            yield False
+        else:
+            yield True
 
 
 @asynccontextmanager
@@ -80,6 +105,8 @@ def save_text_atomic(destination: Path, text: str):
 
 
 async def generate_chunk_atomic(client, text: str, destination: Path):
+    from src.core.storage_retention import check_storage_budget
+    await asyncio.to_thread(check_storage_budget)
     with staged_file(destination) as temporary:
         await client.generate_audio(text, temporary)
         if not temporary.exists() or temporary.stat().st_size <= 100:
@@ -89,13 +116,19 @@ async def generate_chunk_atomic(client, text: str, destination: Path):
 
 async def run_blocking_until_done(function, *args):
     """Keep the cache lock until a compiler thread stops, even after cancellation."""
-    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    cancellation = threading.Event()
+    token = process_cancellation.set(cancellation)
+    try:
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+    finally:
+        process_cancellation.reset(token)
     cancelled = False
     while not task.done():
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
             cancelled = True
+            cancellation.set()
         except Exception:
             break
     if cancelled:

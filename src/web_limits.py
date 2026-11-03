@@ -7,6 +7,7 @@ from starlette.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from src.core.resource_limits import ResourceLimits
+from src.core.storage_retention import StorageBudgetExceeded
 
 MAX_FORM_FIELDS = 32
 
@@ -39,18 +40,24 @@ class JobController:
 
 
 class GenerationRequestLimits:
-    def __init__(self, app, controller):
+    def __init__(self, app, controller, storage_check=None):
         self.app = app
         self.controller = controller
+        self.storage_check = storage_check
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["path"] != "/api/generate" or scope["method"] != "POST":
+        if scope["type"] != "http" or (scope["path"] != "/api/generate" and not scope["path"].startswith("/api/resume/")) or scope["method"] != "POST":
             return await self.app(scope, receive, send)
         controller = self.controller()
         if not controller.admission.acquire(blocking=False):
             return await JSONResponse({"detail": "Generation capacity is full"}, status_code=429,
                                       headers={"Retry-After": "5"})(scope, receive, send)
         try:
+            if self.storage_check is not None:
+                try:
+                    await asyncio.to_thread(self.storage_check)
+                except StorageBudgetExceeded as error:
+                    return await JSONResponse({"detail": str(error)}, status_code=507)(scope, receive, send)
             limit = ResourceLimits.from_env().max_request_bytes
             headers = dict(scope["headers"])
             try:

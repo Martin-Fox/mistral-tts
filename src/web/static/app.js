@@ -527,8 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     handleTaskSuccess(state.audio_file, originalBtnText);
                 } 
                 // Check for error
-                else if (state.error || state.status === 'Failed') {
-                    handleTaskFailure(state.error || 'Pipeline execution failed.', originalBtnText);
+                else if (state.error || state.status === 'Failed' || state.status === 'Interrupted') {
+                    handleTaskFailure(state.error || 'Pipeline execution failed.', originalBtnText, state.status);
                 }
 
             } catch (err) {
@@ -578,13 +578,14 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtnText.textContent = originalBtnText;
     }
 
-    function handleTaskFailure(errorMessage, originalBtnText) {
+    function handleTaskFailure(errorMessage, originalBtnText, taskStatus) {
+        loadResumableTasks();
         isFinished = true;
         if (eventSource) {
             eventSource.close();
         }
 
-        statusBadge.textContent = 'Failed';
+        statusBadge.textContent = taskStatus === 'Interrupted' ? 'Interrupted' : 'Failed';
         appendConsoleLine(`Error: ${errorMessage}`, 'error-line');
 
         // Re-enable submit button
@@ -710,6 +711,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.authenticated) {
                 if (loginOverlay) loginOverlay.classList.add('hidden');
                 loadConfig();
+                loadResumableTasks();
             } else {
                 clearStoredApiKeys();
                 clearApiKeyInputs();
@@ -750,6 +752,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     showLoginStatus('Login successful.', 'success');
                     loginForm.reset();
                     loadConfig();
+                    loadResumableTasks();
                     setTimeout(() => {
                         if (loginOverlay) loginOverlay.classList.add('hidden');
                     }, 500);
@@ -784,6 +787,64 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         });
+    }
+
+    const resumePanel = document.createElement('section');
+    resumePanel.className = 'card hidden';
+    const resumeTitle = document.createElement('h2');
+    resumeTitle.textContent = 'Interrupted / failed tasks';
+    const resumeList = document.createElement('div');
+    const refreshTasks = document.createElement('button');
+    refreshTasks.type = 'button';
+    refreshTasks.textContent = 'Refresh tasks';
+    refreshTasks.addEventListener('click', loadResumableTasks);
+    resumePanel.append(resumeTitle, refreshTasks, resumeList);
+    progressCard.before(resumePanel);
+
+    async function loadResumableTasks() {
+        try {
+            const response = await fetch('/api/tasks');
+            if (!response.ok) return;
+            const data = await response.json();
+            resumeList.replaceChildren();
+            resumePanel.classList.toggle('hidden', !data.tasks.length);
+            for (const task of data.tasks) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = `Resume ${task.id} (${task.status}, ${task.percentage}%)`;
+                button.addEventListener('click', async () => {
+                    button.disabled = true;
+                    try {
+                        const form = new FormData();
+                        form.set('api_key', apiKeyInput.value.trim());
+                        form.set('openai_key', openaiKeyInput ? openaiKeyInput.value.trim() : '');
+                        const resumed = await fetch(`/api/resume/${encodeURIComponent(task.id)}`, {
+                            method: 'POST', body: form
+                        });
+                        if (!resumed.ok) {
+                            const error = await resumed.json();
+                            throw new Error(error.detail || 'Failed to resume task');
+                        }
+                        if (eventSource) eventSource.close();
+                        isFinished = false;
+                        submitBtn.disabled = true;
+                        progressCard.classList.remove('hidden');
+                        playerCard.classList.add('hidden');
+                        consoleLogs.replaceChildren();
+                        renderedLogCount = 0;
+                        startProgressStream(task.id, 'Generate Audiobook');
+                        await loadResumableTasks();
+                    } catch (error) {
+                        alert(error.message);
+                    } finally {
+                        button.disabled = false;
+                    }
+                });
+                resumeList.append(button);
+            }
+        } catch (error) {
+            console.error('Failed to load resumable tasks');
+        }
     }
 
     // Run auth status check and load configuration on initialization

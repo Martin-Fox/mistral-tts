@@ -1,4 +1,4 @@
-"""Canonical v2 identity shared by CLI and WebUI; excludes keys and file paths."""
+"""Canonical v2 identity shared by CLI, WebUI and TUI; excludes keys and file paths."""
 
 import hashlib
 import json
@@ -7,6 +7,10 @@ from pathlib import Path
 from src.api.factory import DEFAULT_TTS_MODELS
 from src.core.config import get_translation_model
 from src.core.text_splitter import SPLITTER_VERSION
+
+
+# Bump whenever reference preprocessing changes the audio sent to the provider.
+VOICE_PREPROCESS_VERSION = 2
 
 
 def hash_sample_file(path: Path) -> str:
@@ -30,6 +34,7 @@ def get_cache_key(
     tts_model: str | None = None,
     voice_sample_hash: str | None = None,
     max_chars: int = 1000,
+    processed_voice_bytes: bytes | None = None,
 ) -> str:
     engine = engine.strip().lower()
     if engine not in DEFAULT_TTS_MODELS:
@@ -41,7 +46,9 @@ def get_cache_key(
         # OpenAI ignores reference audio and normalizes preset names.
         voice = {"id": (voice_preset or voice_manual_id or "alloy").strip().lower()}
     elif sample_hash is not None:
-        voice = {"sample_sha256": sample_hash}
+        voice = {"sample_sha256": sample_hash, "processing_version": VOICE_PREPROCESS_VERSION}
+        if isinstance(processed_voice_bytes, bytes):
+            voice["processed_sha256"] = hashlib.sha256(processed_voice_bytes).hexdigest()
     else:
         voice = {"id": voice_preset or voice_manual_id or "en_paul_neutral"}
     identity = {

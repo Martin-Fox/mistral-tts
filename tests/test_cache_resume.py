@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src import cli as cli_module, web
+from src import cli as cli_module, web, tui
 
 
-@pytest.fixture(params=['web', 'cli'])
+@pytest.fixture(params=['web', 'cli', 'tui'])
 def pipeline(request, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     chunks = ['first', 'second', 'third']
@@ -27,7 +27,7 @@ def pipeline(request, tmp_path, monkeypatch):
     tts.generate_audio = AsyncMock(side_effect=generate)
     compiler = Mock()
     compiler.compile.return_value = {}
-    module = web if request.param == 'web' else cli_module
+    module = {'web': web, 'cli': cli_module, 'tui': tui}[request.param]
     monkeypatch.setattr(module, 'get_tts_client', Mock(return_value=tts))
     monkeypatch.setattr(module, 'AudioCompiler', Mock(return_value=compiler))
     if request.param == 'web':
@@ -41,6 +41,15 @@ def pipeline(request, tmp_path, monkeypatch):
                 voice_manual_id=None, source_lang=None, target_lang=None,
                 output_filename='test.mp3',
             )
+    elif request.param == 'tui':
+        source = tmp_path / 'input.txt'
+        source.write_text('stable source')
+        app = tui.BooksmithTUI()
+        app.log_message = Mock()
+        app.query_one = Mock()
+        monkeypatch.setattr(tui, 'TextSplitter', Mock(return_value=splitter))
+        async def run():
+            await app.process_book(str(source), '', 'test-voice', str(tmp_path / 'test.mp3'), 'fake-key')
     else:
         source = tmp_path / 'input.txt'
         source.write_text('stable source')

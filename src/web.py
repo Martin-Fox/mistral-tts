@@ -21,15 +21,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator, ValidationError
 
 from src.core.text_splitter import TextSplitter
-from src.core.cache_identity import get_cache_key
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.resource_limits import ResourceLimits, ResourceLimitExceeded, check_text
 from src.web_limits import JobController, GenerationRequestLimits, GenerationRoute
 from src.core.audio_compiler import AudioCompiler
-from src.core.cache_io import cache_lock, save_json_atomic, generate_chunk_atomic, run_blocking_until_done
+from src.core.cache_io import run_blocking_until_done
+from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
 from src.core.auth import hash_password, verify_password, load_credentials, save_credentials
 from src.core.login_limiter import LoginLimiter
+from src.core.task_store import save_job, load_job, task_directory, load_translation, save_translation, validate_task_id, save_cache_reference
+from src.core.storage_retention import StoragePolicy, StorageBudgetExceeded, check_storage_budget, sweep_storage
+from src.core.process_runner import process_budget
+from src.api.retry import validate_retry_settings
 from src.core.task_db import TaskDatabase
 from src.core.config import get_translation_model, save_translation_model
 
@@ -103,7 +107,8 @@ app = FastAPI(
 )
 
 job_controller = JobController(running=2, queued=2)
-app.add_middleware(GenerationRequestLimits, controller=lambda: job_controller)
+app.add_middleware(GenerationRequestLimits, controller=lambda: job_controller,
+                   storage_check=lambda: check_storage_budget())
 
 
 async def read_upload_bounded(upload: UploadFile, limit: int) -> bytes:
@@ -148,20 +153,6 @@ global_log_handler = TaskLogHandler(db)
 logging.getLogger("booksmith").addHandler(global_log_handler)
 logging.getLogger("src").addHandler(global_log_handler)
 
-def load_manifest(manifest_path: Path) -> dict:
-    """Loads cache manifest file if it exists."""
-    if manifest_path.exists():
-        try:
-            with open(manifest_path, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"chunks": [], "completed": []}
-
-def save_manifest(manifest_path: Path, manifest: dict):
-    """Publish the manifest from a unique temporary file under the cache lock."""
-    save_json_atomic(manifest_path, manifest)
-
 async def run_generation_pipeline(
     task_id: str,
     api_key: str,
@@ -175,20 +166,25 @@ async def run_generation_pipeline(
     output_filename: str,
     engine: str = "mistral",
     openai_key: Optional[str] = None,
-    translation_model: Optional[str] = None
+    translation_model: Optional[str] = None,
+    input_encoding: Optional[str] = None
 ):
     """
     Asynchronous pipeline task that handles file translation, voice cloning,
     audio chunk generation, and final compilation.
     """
+    saved_job = (task_directory(task_id) / "spec.json").exists()
     engine = engine.strip().lower()
     text_path = None
     voice_path = None
-    translated_path = None
     task_temp_dir = None
 
     token = current_task_id.set(task_id)
     try:
+        if saved_job:
+            parameters = load_job(task_id)
+            translation_model = parameters["translation_model"]
+            input_encoding = parameters["input_encoding"]
         db.update_task(task_id, status="Preparing Files")
         logger.info(f"Starting audiobook generation task: {task_id}")
 
@@ -205,6 +201,7 @@ async def run_generation_pipeline(
                 f.write(content)
             logger.info(f"Saved uploaded text file to {text_path}")
         elif text_content is not None:
+            input_encoding = "utf-8"
             text_path = task_temp_dir / "input.txt"
             with open(text_path, "w", encoding="utf-8") as f:
                 f.write(text_content)
@@ -213,161 +210,72 @@ async def run_generation_pipeline(
             raise ValueError("No text input provided.")
 
         # 2. Save voice file to a temporary path if provided
-        voice_bytes = None
         if voice_file_data:
             filename, content = voice_file_data
-            voice_bytes = content
             suffix = Path(filename).suffix or ".mp3"
             voice_path = task_temp_dir / f"voice_{task_id}{suffix}"
             with open(voice_path, "wb") as f:
                 f.write(content)
             logger.info(f"Saved uploaded voice file to {voice_path}")
 
-        # Read base text content
-        from src.core.epub_parser import read_input_text
-        text = read_input_text(text_path)
-
-        original_text = text
         effective_translation_model = (translation_model or get_translation_model()) if target_lang else None
 
-        # 3. Translation step
-        if target_lang:
-            db.update_task(task_id, status="Translating")
-            source = source_lang or "English"
-            logger.info(f"Translating text from {source} to {target_lang}...")
-            translation_client = MistralTTSClient(api_key=api_key, translation_model=effective_translation_model)
-            translated_path = await translation_client.translate_file(text_path, source, target_lang)
-            logger.info(f"Translation completed. Translated file: {translated_path}")
-            text = read_input_text(translated_path)
+        async def translate(path, source, target, model):
+            translation_client = MistralTTSClient(api_key=api_key, translation_model=model)
+            translated = load_translation(task_id) if saved_job else None
+            if translated is None:
+                if saved_job:
+                    translation_client.translation_cache_dir = task_directory(task_id) / "translation-cache"
+                    translated = await translation_client.translate_file(
+                        path, source, target,
+                        output_filename=f"{task_id}_translated{'.srt' if path.suffix.lower() == '.srt' else '.txt'}",
+                        input_encoding=input_encoding)
+                    translated = save_translation(task_id, translated)
+                else:
+                    translated = await translation_client.translate_file(path, source, target, input_encoding=input_encoding)
+            logger.info(f"Translation completed. Translated file: {translated}")
+            return translated
 
-        # 4. Split text into semantic chunks
-        db.update_task(task_id, status="Splitting Text")
-        splitter = TextSplitter()
-        chunks = splitter.split(text)
-        total_chunks = len(chunks)
-        total_chars = sum(len(c) for c in chunks)
-        logger.info(f"Text split into {total_chunks} semantic chunks (total characters: {total_chars}).")
-        if total_chunks == 0:
-            raise ValueError("The split text has 0 chunks.")
+        def report(event):
+            if event.stage in ('Translating', 'Splitting Text', 'Configuring Voice', 'Waiting for Cache',
+                               'Generating Audio', 'Compiling Audiobook'):
+                db.update_task(task_id, status=event.stage)
+            if event.stage == 'Text Ready':
+                logger.info(f"Text split into {event.total} semantic chunks (total characters: {event.characters}).")
+            elif event.stage == 'Translating':
+                logger.info(f"Translating text from {source_lang or 'English'} to {target_lang}...")
+            elif event.stage == 'Generating Chunk':
+                action = 'Reusing cached audio' if event.cached else 'Generating audio'
+                logger.info(f"{action} for chunk {event.current}/{event.total}...")
+            elif event.stage == 'Chunk Ready':
+                db.update_task(task_id, percentage=int(event.current / event.total * 90))
+            elif event.stage == 'Compiling Audiobook':
+                logger.info(f"Compiling final audiobook file from {event.total} chunks...")
 
-        # Resolve correct TTS API key and client
+        prepared = await prepare_text(
+            text_path, splitter=TextSplitter(), source_lang=source_lang, target_lang=target_lang,
+            translation_model=effective_translation_model, input_encoding=input_encoding,
+            translate=translate, progress=report)
         tts_api_key = openai_key if engine == "openai" else api_key
         client = get_tts_client(engine, tts_api_key)
+        requested_name = Path(output_filename)
+        output_stem = requested_name.stem.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+        published_filename = f"{task_id}_{output_stem}{requested_name.suffix}"
+        output_path = Path("storage/output") / published_filename
 
-        cache_key = get_cache_key(
-            original_text, voice_preset, voice_manual_id, voice_bytes,
-            source_lang, target_lang, effective_translation_model,
-            engine=engine, tts_model=client.model, max_chars=splitter.max_chars,
-        )
-        cache_dir = Path("storage/cache") / cache_key
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = cache_dir / "manifest.json"
+        def cache_ready(directory):
+            if saved_job:
+                save_cache_reference(task_id, directory.name)
 
-        # 5. Clone or configure voice
-        db.update_task(task_id, status="Configuring Voice")
-        if engine == "openai":
-            voice_id = voice_preset or voice_manual_id or "alloy"
-            logger.info(f"Setting OpenAI voice to: {voice_id}")
-            client.set_voice_id(voice_id)
-        else:
-            # engine == "mistral"
-            if voice_path:
-                logger.info("Cloning voice profile from uploaded file...")
-                await client.clone_voice(voice_path)
-            elif voice_preset:
-                logger.info(f"Setting voice preset to: {voice_preset}")
-                client.set_voice_id(voice_preset)
-            elif voice_manual_id:
-                logger.info(f"Setting voice ID to: {voice_manual_id}")
-                client.set_voice_id(voice_manual_id)
-            else:
-                logger.info("No voice specified. Defaulting to en_paul_neutral.")
-                client.set_voice_id("en_paul_neutral")
-
-        db.update_task(task_id, status="Waiting for Cache")
-        async with cache_lock(cache_dir):
-            # 6. Load manifest and generate audio chunks
-            db.update_task(task_id, status="Generating Audio")
-            manifest = load_manifest(manifest_path)
-            cached_chunks = manifest.get("chunks", [])
-            if not isinstance(cached_chunks, list):
-                cached_chunks = []
-            completed = manifest.get("completed", [])
-            if not isinstance(completed, list):
-                completed = []
-            # Invalidate stale completion markers before publishing the new text list.
-            # Otherwise an interrupted regeneration could reuse old audio on resume.
-            manifest["completed"] = [
-                f"chunk_{i:04d}.mp3" for i, chunk in enumerate(chunks)
-                if i < len(cached_chunks) and cached_chunks[i] == chunk
-                and f"chunk_{i:04d}.mp3" in completed
-                and (cache_dir / f"chunk_{i:04d}.mp3").exists()
-                and (cache_dir / f"chunk_{i:04d}.mp3").stat().st_size > 100
-            ]
-            manifest["chunks"] = chunks
-            save_manifest(manifest_path, manifest)
-
-            chunk_files = []
-            for i, chunk in enumerate(chunks):
-                chunk_filename = f"chunk_{i:04d}.mp3"
-                chunk_path = cache_dir / chunk_filename
-                chunk_files.append(chunk_path)
-
-                if (
-                    chunk_filename in manifest.get("completed", [])
-                    and chunk_path.exists()
-                    and chunk_path.stat().st_size > 100
-                ):
-                    logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
-                    percentage = int(((i + 1) / total_chunks) * 90)
-                    db.update_task(task_id, percentage=percentage)
-                    continue
-
-                logger.info(f"Generating audio for chunk {i+1}/{total_chunks}...")
-                await generate_chunk_atomic(client, chunk, chunk_path)
-
-                if "completed" not in manifest:
-                    manifest["completed"] = []
-                if chunk_filename not in manifest["completed"]:
-                    manifest["completed"].append(chunk_filename)
-                save_manifest(manifest_path, manifest)
-
-                percentage = int(((i + 1) / total_chunks) * 90)
-                db.update_task(task_id, percentage=percentage)
-
-            # Verify all chunks have corresponding valid chunk files before compiling
-            if len(chunk_files) != total_chunks:
-                raise RuntimeError(f"Chunk count mismatch: expected {total_chunks}, got {len(chunk_files)} files.")
-            for idx, cf in enumerate(chunk_files):
-                if not cf.exists() or cf.stat().st_size <= 100:
-                    raise RuntimeError(
-                        f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{total_chunks})"
-                    )
-
-            # 7. Compile final audiobook
-            db.update_task(task_id, status="Compiling Audiobook")
-            logger.info(f"Compiling final audiobook file from {total_chunks} chunks...")
-            compiler = AudioCompiler()
-            requested_name = Path(output_filename)
-            # Leave room for the UUID prefix on filesystems with 255-byte names.
-            output_stem = requested_name.stem.encode("utf-8")[:180].decode("utf-8", errors="ignore")
-            published_filename = f"{task_id}_{output_stem}{requested_name.suffix}"
-            output_path = Path("storage/output") / published_filename
-            compilation_meta = await run_blocking_until_done(compiler.compile, chunk_files, output_path)
-            logger.info(
-                f"Audiobook compiled successfully. Saved to {output_path} "
-                f"(verified duration: {compilation_meta.get('output_duration', 0):.2f}s, "
-                f"expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {total_chunks} chunks)"
-            )
-
-            # 8. Mark task as completed
-            db.update_task(
-                task_id,
-                percentage=100,
-                status="Completed",
-                completed=True,
-                audio_file=published_filename
-            )
+        result = await run_pipeline(
+            prepared, client=client, engine=engine,
+            voice=VoiceInput(voice_preset or voice_manual_id, voice_path),
+            output_path=output_path, compiler_factory=AudioCompiler, progress=report, cache_ready=cache_ready)
+        logger.info(
+            f"Audiobook compiled successfully. Saved to {output_path} "
+            f"(verified duration: {result.compilation.get('output_duration', 0):.2f}s, "
+            f"expected ~{result.compilation.get('expected_duration', 0):.2f}s across {result.chunk_count} chunks)")
+        db.update_task(task_id, percentage=100, status="Completed", completed=True, audio_file=published_filename)
 
     except Exception as e:
         logger.error(f"Error in generation pipeline: {e}", exc_info=True)
@@ -628,7 +536,7 @@ async def get_progress(
             }
             
             yield f"data: {json.dumps(payload)}\n\n"
-            if task_state["completed"] or task_state["status"] == "Failed":
+            if task_state["completed"] or task_state["status"] in ("Failed", "Interrupted"):
                 break
             await asyncio.sleep(0.5)
 
@@ -656,8 +564,11 @@ async def generate_audiobook(
 ):
     """
     Triggers the background generation task and returns a unique task ID immediately.
-    Includes eviction of tasks older than 24 hours to prevent memory leaks.
+    Storage retention runs separately and protects unfinished/resumable tasks.
     """
+    engine = engine.strip().lower()
+    if engine not in ("mistral", "openai"):
+        raise HTTPException(status_code=400, detail="Unknown TTS engine")
     if not text_file and not text_content:
         raise HTTPException(status_code=400, detail="Either text_file or text_content must be provided.")
 
@@ -754,8 +665,6 @@ async def generate_audiobook(
             except (ValueError, zipfile.BadZipFile, ET.ParseError):
                 raise HTTPException(status_code=400, detail="Invalid input document") from None
 
-    # Initialize task state in database
-    db.create_task(task_id)
 
     # Enqueue background execution task
     pipeline_kwargs = {
@@ -775,6 +684,16 @@ async def generate_audiobook(
     if translation_model is not None:
         pipeline_kwargs["translation_model"] = translation_model
 
+    incoming_size = sum(len(upload[1]) for upload in (text_file_data, voice_file_data) if upload)
+    if text_file_data is None:
+        incoming_size += len((text_content or '').encode('utf-8'))
+    try:
+        await asyncio.to_thread(check_storage_budget, additional_bytes=incoming_size * 2)
+    except StorageBudgetExceeded as error:
+        raise HTTPException(status_code=507, detail=str(error)) from None
+    save_job(task_id, pipeline_kwargs)
+    db.create_task(task_id)
+
     background_tasks.add_task(
         job_controller.run,
         run_generation_pipeline,
@@ -784,19 +703,62 @@ async def generate_audiobook(
     return {"task_id": task_id}
 
 
+@app.get("/api/tasks")
+def list_resumable_tasks(session: str = Depends(verify_session)):
+    return {"tasks": [task for task in db.resumable_tasks()
+                      if (task_directory(task['id']) / 'spec.json').exists()]}
+
+
+@generation_router.post("/api/resume/{task_id}")
+async def resume_task(task_id: str, background_tasks: BackgroundTasks,
+                      api_key: Optional[str] = Form(None), openai_key: Optional[str] = Form(None),
+                      session: str = Depends(verify_session)):
+    try:
+        task_id = validate_task_id(task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid task ID") from None
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task['status'] not in ('Interrupted', 'Failed') or task['completed']:
+        raise HTTPException(status_code=409, detail="Task is not resumable")
+    try:
+        arguments = load_job(task_id)
+    except (OSError, ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=409, detail="Saved task inputs are missing, changed or incompatible") from None
+    mistral = (api_key or '').strip() or os.getenv('MISTRAL_API_KEY', '')
+    openai = (openai_key or '').strip() or os.getenv('OPENAI_API_KEY', '')
+    if (arguments['engine'] == 'mistral' or arguments['target_lang']) and not mistral:
+        raise HTTPException(status_code=400, detail="Mistral API key required to resume")
+    if arguments['engine'] == 'openai' and not openai:
+        raise HTTPException(status_code=400, detail="OpenAI API key required to resume")
+    incoming_size = sum(len(upload[1]) for upload in (arguments['text_file_data'], arguments['voice_file_data']) if upload)
+    try:
+        await asyncio.to_thread(check_storage_budget, additional_bytes=incoming_size)
+    except StorageBudgetExceeded as error:
+        raise HTTPException(status_code=507, detail=str(error)) from None
+    if not db.claim_resume(task_id):
+        raise HTTPException(status_code=409, detail="Task was already resumed")
+    background_tasks.add_task(job_controller.run, run_generation_pipeline,
+                              task_id=task_id, api_key=mistral, openai_key=openai, **arguments)
+    return {"task_id": task_id}
+
+
 app.include_router(generation_router)
 
 
 async def task_purger_loop():
-    """
-    Loop infinitely to evict tasks older than 24 hours from the database.
-    """
+    """Plan or apply state-aware retention without blocking the event loop."""
     while True:
         try:
-            cutoff = time.time() - 86400
-            purged = db.delete_old_tasks(cutoff)
-            if purged > 0:
-                logger.info(f"Background purger evicted {purged} tasks older than 24 hours.")
+            policy = StoragePolicy.from_env()
+            report = await run_blocking_until_done(
+                lambda: sweep_storage(Path('storage'), db.db_path, policy=policy,
+                                      dry_run=not policy.storage_cleanup_enabled))
+            if report['candidates'] or report['expired_tasks'] or report['skipped']:
+                logger.info("Storage retention dry_run=%s: %d artifacts, %d completed tasks, %d skipped",
+                            report['dry_run'], len(report['candidates']),
+                            len(report['expired_tasks']), len(report['skipped']))
         except Exception as e:
             logger.error(f"Error in task_purger_loop: {e}", exc_info=True)
         await asyncio.sleep(1800)
@@ -805,10 +767,15 @@ async def task_purger_loop():
 @app.on_event("startup")
 async def startup_event():
     global APP_USERNAME, APP_PASSWORD, APP_PASSWORD_HASH, job_controller
+    validate_retry_settings()
+    StoragePolicy.from_env()
+    process_budget()
+    process_budget(probe=True)
     limits = ResourceLimits.from_env()
     job_controller = JobController(limits.max_running_jobs, limits.max_queued_jobs)
     configure_sessions()
     APP_USERNAME, APP_PASSWORD_HASH = load_credentials(AUTH_FILE, APP_USERNAME, APP_PASSWORD)
     APP_PASSWORD = None
+    db.interrupt_unfinished_tasks()
     asyncio.create_task(task_purger_loop())
 

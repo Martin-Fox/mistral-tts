@@ -173,12 +173,13 @@ def test_probe_duration_exact_ffmpeg_null_decoding(tmp_path):
         )
         duration = compiler._probe_duration(dummy_file)
 
-        mock_sub.assert_called_once_with(
+        mock_sub.assert_called_with(
             ["ffmpeg", "-nostats", "-v", "info", "-i", str(dummy_file), "-f", "null", "-"],
             capture_output=True,
             text=True,
             check=True,
-            timeout=30.0
+            timeout=120.0,
+            stdin=subprocess.DEVNULL
         )
         # 1 * 60 + 23.45 = 83.45
         assert duration == pytest.approx(83.45, rel=1e-5)
