@@ -14,6 +14,7 @@ For deployment, restart recovery, backups and upgrades, see
 
 - **Interactive WebUI:** A premium, responsive single-page web application featuring glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, an in-browser console terminal streaming live server logs via Server-Sent Events (SSE), and a custom audio player for instant playback.
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
+- **Windows Desktop Packaging:** PyInstaller specification and CI workflow for a portable executable with web assets and FFmpeg/ffprobe; native source/artifact acceptance remains pending.
 - **Integrated Translation:** Translate source files from a source language to a target language using configurable Mistral chat models (default: `ministral-8b-latest`, with support for `ministral-3b-latest`, `mistral-small-latest`, `mistral-medium-latest`, and `mistral-large-latest`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
 - **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`), and electronic books (`.epub` and unencrypted `.mobi`), automatically extracting content in the correct reading order.
 - **Audio Truncation Safeguard & Duration Verification:** Adds trailing silence (1.0s default), verifies full decoded duration with FFmpeg and rejects output more than 4.0s shorter than the expected total. This detects duration loss; it does not prove linguistic completeness or detect every short omission.
@@ -67,7 +68,21 @@ For deployment, restart recovery, backups and upgrades, see
 
 ## 📖 Usage
 
-### Running the WebUI
+### Windows desktop packaging
+
+The launcher, `mistral-tts.spec` and `.gitea/workflows/build-windows.yml` are
+implemented. The intended artifact is `mistral-tts-windows-x64.zip`; a successful
+native build and clean-Windows artifact smoke are still required before treating
+it as a verified portable release. See [Windows acceptance](docs/WINDOWS.md).
+
+For a built artifact, extract into a writable directory and configure a private
+`.env` beside the executable with a unique `APP_PASSWORD` before launching
+`mistral-tts.exe` or `run.bat`. The default password is refused before WebUI
+startup. Configure provider keys in that file or, after login, in WebUI. The
+launcher selects a local port and opens the browser. Storage is kept beside the
+executable; assets/binaries are read from their bundled locations.
+
+### Running the WebUI (Python)
 
 To launch the WebUI:
 
@@ -275,6 +290,7 @@ Use [Operations](docs/OPERATIONS.md) before replacing an existing installation.
 - [x] **MOBI Support:** Ingest and parse MOBI files to extract chapters for synthesis.
 - [x] **OpenAI TTS Integration:** Support the OpenAI TTS API as an alternative synthesis engine using preset voices.
 - [x] **Audio Truncation Safeguard & Duration Verification:** Enforce end-to-end duration verification and trailing silence padding.
+- [x] **Standalone Windows Packaging:** PyInstaller specification and build workflow exist; native artifact acceptance remains pending.
 
 
 

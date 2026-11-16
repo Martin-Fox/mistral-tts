@@ -32,7 +32,8 @@ def main():
         environment['PYTHONPATH'] = str(checkout)
         return subprocess.run([
             sys.executable, '-m', 'pytest', '-q', '--durations=5',
-            'tests/test_platform_smoke.py', 'tests/test_audio_publication.py',
+            'tests/test_platform_smoke.py', 'tests/test_ffmpeg_utils.py',
+            'tests/test_audio_publication.py',
             'tests/test_cache_io.py', 'tests/test_process_runner.py',
             'tests/test_storage_retention.py', 'tests/test_auth.py',
         ], cwd=checkout, env=environment, timeout=180).returncode

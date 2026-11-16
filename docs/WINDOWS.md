@@ -1,9 +1,10 @@
 # Windows source distribution and acceptance
 
 The current P22 target is **CPython 3.11 x64 + FFmpeg/ffprobe**, running from
-source with `PYTHONUTF8=1`. There is no Windows installer, bundler specification,
-or tested standalone `.exe`. Packaging is a separate change if that release
-format is selected; a smoke suite alone does not validate an executable release.
+source with `PYTHONUTF8=1`. PR #28 added `desktop.py`, `src/desktop.py`, `mistral-tts.spec` and a separate
+`build-windows.yml` workflow. These provide the packaging implementation, not
+evidence of a tested standalone `.exe`. A source smoke suite alone does not
+validate an executable release.
 
 ## Source setup (PowerShell)
 
@@ -83,8 +84,8 @@ the Linux entry. Each entry has a 15-minute deadline and runs independently
 
 ## Acceptance status
 
-Local Linux checks for this change: **487 pytest tests passed**, **94 portable
-smoke tests passed** from the disposable Unicode checkout, Ruff and `pip check`
+Local Linux checks after integrating PR #28: **505 pytest tests passed**,
+**112 portable smoke tests passed** from the disposable Unicode checkout, Ruff and `pip check`
 passed. A dry-run wheel-only resolution of the existing dev lock for Windows
 x64/CPython 3.11 succeeded (48 packages); no Windows packages were installed.
 This checks dependency selection, not native imports or execution.
@@ -97,7 +98,19 @@ full pytest output (including explicit platform skips), smoke output and a local
 WebUI startup/static-page check. Confirm that temporary compiler files disappear,
 cache locks are released after a child is stopped and user state is untouched.
 
-Network filesystems, multi-host cache writers and Windows executable packaging
-are outside this source-distribution acceptance. If `.exe` becomes a release
-target, add a separate bundler/build PR, packaged-asset paths and clean-Windows
-artifact smoke checks before making a release claim.
+The combined source supports bundled binary resolution for every compiler,
+metadata-probe and reference-preprocessing call while retaining process budgets,
+atomic output publication and cleanup. Frozen WebUI assets are read from
+`sys._MEIPASS/src/web/static`; they are not created or modified at startup.
+The desktop launcher selects a writable executable directory when frozen (the
+checkout during source execution), and only does so when actually launching.
+Importing its helper functions does not change the caller's working directory.
+Before starting the desktop application, configure unique WebUI credentials in a
+private `.env` beside the executable; default credentials still stop startup.
+
+Native artifact acceptance must cover the built executable without system
+Python/FFmpeg, included static assets/binaries, login, storage writes and a local
+synthetic audiobook after restart, from paths with spaces/apostrophe/Unicode.
+The existing packaging workflow alone does not establish these results; no
+native build or new dependency installation was performed while resolving this
+merge. Network filesystems and multi-host writers remain outside acceptance.

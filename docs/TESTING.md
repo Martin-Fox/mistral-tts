@@ -152,7 +152,8 @@ the current interpreter, preserves the original checkout and returns pytest's
 exit code. A 180-second subprocess deadline complements per-test timeouts.
 Real FFmpeg/ffprobe checks, audio publication/cleanup, cross-process cache locks,
 timeouts/cancellation, credential persistence, retention and source-relative web
-assets are exercised. API clients remain fake and user state is isolated by the
+assets are exercised. The portable smoke also includes bundled-binary lookup,
+frozen static routes and desktop-import isolation regressions. API clients remain fake and user state is isolated by the
 shared harness. The temporary checkout is removed on completion/failure.
 
 See [WINDOWS.md](WINDOWS.md) for native runner prerequisites and the remaining
