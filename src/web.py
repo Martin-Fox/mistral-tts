@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import threading
 import tempfile
@@ -39,8 +40,20 @@ from src.core.config import get_translation_model, save_translation_model, load_
 # Load environment variables from .env
 load_environment()
 
-# Ensure directories exist on startup
-STATIC_DIRECTORY = Path(__file__).resolve().parent / "web" / "static"
+def get_static_dir() -> Path:
+    """Resolves static assets directory for PyInstaller bundle or local development."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass) / "src" / "web" / "static"
+    local_static = Path(__file__).resolve().parent / "web" / "static"
+    if local_static.exists():
+        return local_static
+    return Path("src/web/static")
+
+# Static assets can live in a read-only source or PyInstaller directory.
+STATIC_DIRECTORY = get_static_dir()
+
+# Only mutable storage is created at startup.
 Path("storage/cache").mkdir(parents=True, exist_ok=True)
 Path("storage/output").mkdir(parents=True, exist_ok=True)
 

@@ -8,6 +8,7 @@ Mistral-TTS-Booksmith bridges the gap between raw text / ebook files and polishe
 ## Core functionality
 - **Interactive WebUI:** A responsive single-page web interface built with FastAPI, vanilla HTML/CSS/JS, glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, session authentication, and an in-browser console terminal streaming live logs via Server-Sent Events (SSE).
 - **Interactive TUI:** A modern Terminal User Interface built with Textual for easy parameter configuration, model selection, and real-time progress monitoring.
+- **Standalone Windows Desktop Launcher:** PyInstaller packaging, bundled FFmpeg/FFprobe lookup, automatic port selection and browser opening are implemented. Native Windows source/artifact acceptance remains pending; see `docs/WINDOWS.md`.
 - **Zero-Shot Voice Cloning:** Clones voice profiles using a reference audio sample (.mp3/.wav) via Mistral's native zero-shot endpoints, with automatic afftdn audio denoising.
 - **Preset Voice Selection:** Built-in high-quality Mistral voices (`en_paul_neutral`, `fr_marie_neutral`, etc.) and OpenAI voices (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`).
 - **Dual TTS Engine Architecture:** Switch seamlessly between Mistral Voxtral (`voxtral-mini-tts-2603`) and OpenAI TTS (`tts-1`).
@@ -34,6 +35,8 @@ Mistral-TTS-Booksmith bridges the gap between raw text / ebook files and polishe
 mistral-tts/
 ├── AGENTS.md                  # Project-scoped AI rules & workflow
 ├── PROJECT.md                 # Root project overview & architecture
+├── desktop.py                 # Root entrypoint for Desktop Launcher
+├── mistral-tts.spec           # PyInstaller multi-asset bundling specification
 ├── src/
 │   ├── api/
 │   │   ├── base_client.py     # Base abstract TTS client interface
@@ -50,6 +53,7 @@ mistral-tts/
 │   │   ├── epub_parser.py     # Parser for EPUB, MOBI, and plain text
 │   │   ├── task_store.py      # Durable private resume inputs and translation checkpoints
 │   │   ├── storage_retention.py # State-aware maintenance and soft disk budgets
+│   │   ├── ffmpeg_utils.py    # Multi-tier FFmpeg/FFprobe binary resolution
 │   │   ├── task_db.py         # SQLite persistent state management
 │   │   └── text_splitter.py   # Semantic chunking logic
 │   ├── web/
@@ -58,6 +62,7 @@ mistral-tts/
 │   │       ├── index.html     # HTML structure with modern layouts
 │   │       └── styles.css     # CSS style rules with dark theme and glassmorphism
 │   ├── cli.py                 # Primary command-line interface entry point
+│   ├── desktop.py             # Desktop launcher (auto port detection, browser opener)
 │   ├── tui.py                 # Interactive Terminal UI built with Textual
 │   └── web.py                 # FastAPI backend server with background runner and SSE
 ├── storage/
@@ -69,8 +74,10 @@ mistral-tts/
 │   └── translations/          # Destination for translated source documents
 ├── tests/                     # Automated test suites for core modules & WebUI
 │   ├── test_audio_compiler.py
+│   ├── test_cli_integration.py
 │   ├── test_config.py
 │   ├── test_epub.py
+│   ├── test_ffmpeg_utils.py
 │   ├── test_text_splitter.py
 │   ├── test_translation.py
 │   ├── test_tui.py
@@ -79,6 +86,9 @@ mistral-tts/
 │   └── network_guard.py        # Test-only external IP/DNS guard; local IPC permitted
 ├── .dockerignore
 ├── .env                       # (Local only) Secure API keys & config
+├── .gitea/
+│   └── workflows/
+│       └── build-windows.yml  # Gitea Actions CI workflow for Windows standalone executable
 ├── Dockerfile                 # Multi-stage container configuration
 ├── LICENSE                    # MIT License
 ├── README.md                  # Main project documentation
@@ -110,8 +120,8 @@ mistral-tts/
 
 ## Constraints
 - **API Payload Constraints:** Individual text chunks must strictly adhere to Mistral and OpenAI API character/token limits.
-- **Local System Dependencies:** Requires **FFmpeg** and **ffprobe** installed in the system PATH. Windows verification targets CPython 3.11 with UTF-8 mode; native acceptance is tracked in `docs/WINDOWS.md`.
-- **Filesystem Locations:** WebUI static assets are resolved relative to `src/web.py`; mutable `storage/` stays relative to the launch working directory. No storage migration is implied by launching from another directory.
+- **Local System Dependencies:** Requires **FFmpeg** and **ffprobe** in PATH or resolved from the bundled/portable binary directories. Windows verification targets CPython 3.11 with UTF-8 mode; native acceptance is tracked in `docs/WINDOWS.md`.
+- **Filesystem Locations:** WebUI static assets are resolved from the PyInstaller extraction directory or relative to `src/web.py`; mutable `storage/` stays relative to the launch working directory. The desktop launcher selects the executable directory when frozen, or the checkout during source execution. No storage migration is implied by launching from another directory.
 - **Audio Verification:** Compilation probes decoded chunk/output duration, pads trailing silence (1.0s default) to protect `loudnorm` buffers, and rejects output more than 4.0s shorter than the expected chunk/pause/padding total. Only verified output is published atomically. Duration checks do not prove linguistic completeness of provider output.
 - **Deployment and Recovery:** One shared WebUI account, worker and replica; process-local sessions expire and reset on restart. Remote access needs configured HTTPS; Secure cookies do not provide TLS. Retention defaults to dry-run, protects failed/interrupted jobs and uses soft disk thresholds rather than hard quotas. Use stopped whole-storage backups before migration; see `docs/OPERATIONS.md`.
 - **SDK Compatibility:** The dependency locks retain `mistralai==2.4.9`; OpenAI TTS uses HTTPX directly and does not require the OpenAI SDK. Regenerate and verify both dependency locks when updating versions.
@@ -131,5 +141,6 @@ mistral-tts/
 - [ ] **OpenID Connect (OIDC) Login:** Integrate authentication based on OpenID Connect (OIDC).
 - [ ] **Multi-User Login:** Support multiple user accounts and personalized histories.
 - [x] **Audio Truncation Safeguard & Duration Verification:** Enforce end-to-end duration verification and trailing silence padding.
+- [x] **Standalone Windows Packaging (PyInstaller + FFmpeg bundle):** Build specification and Gitea workflow are implemented; native artifact verification remains an open release gate.
 - [ ] **WebUI About Modal & Current Version Display:** Add a menu item / modal for "About" that displays application metadata, current version (e.g. 1.0.2), license, and project links.
 - [ ] **WebUI Help / Quick Guide:** Interactive help or documentation drawer/modal explaining parameters (chunking, temperature, voices, engines, loudnorm) and troubleshooting tips.

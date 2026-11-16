@@ -8,6 +8,7 @@ import re
 import tempfile
 import math
 from src.core.process_runner import run_process_async, process_budget
+from src.core.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
 from pathlib import Path
 from typing import Optional
 from mistralai.client import Mistral
@@ -116,7 +117,7 @@ class MistralTTSClient(BaseTTSClient):
             temp_denoised = Path(directory) / ("denoised" + (audio_path.suffix or ".mp3"))
             try:
                 await run_process_async([
-                    "ffmpeg", "-y", "-i", str(audio_path), "-af", "afftdn", str(temp_denoised)
+                    get_ffmpeg_path(), "-y", "-i", str(audio_path), "-af", "afftdn", str(temp_denoised)
                 ], timeout=process_budget())
                 if not temp_denoised.exists() or not 0 < temp_denoised.stat().st_size <= limit:
                     raise RuntimeError("Denoised voice sample is empty or exceeds its size budget")
@@ -187,7 +188,7 @@ class MistralTTSClient(BaseTTSClient):
         # Verify valid duration with ffprobe
         try:
             probe_cmd = [
-                "ffprobe", "-v", "error",
+                get_ffprobe_path(), "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 str(output_path)

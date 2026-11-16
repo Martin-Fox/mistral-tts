@@ -2,6 +2,7 @@ import tempfile
 import re
 import math
 from src.core.process_runner import run_process, process_budget
+from src.core.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
 from src.core.cache_io import try_directory_lock
 from src.core.storage_retention import check_storage_budget
 from pathlib import Path
@@ -43,7 +44,7 @@ class AudioCompiler:
         if not file_path.exists():
             raise FileNotFoundError(f"Audio file not found for duration probing: {file_path}")
         cmd = [
-            "ffmpeg", "-nostats", "-v", "info",
+            get_ffmpeg_path(), "-nostats", "-v", "info",
             "-i", str(file_path),
             "-f", "null", "-"
         ]
@@ -63,7 +64,7 @@ class AudioCompiler:
         # Metadata is only a timeout hint; decoded audio remains the validation source.
         try:
             result = run_process([
-                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                get_ffprobe_path(), "-v", "error", "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1", str(file_path)
             ], text=True, timeout=process_budget(probe=True))
             duration = float(result.stdout.strip())
@@ -85,7 +86,7 @@ class AudioCompiler:
         import json
         try:
             cmd = [
-                "ffprobe", "-v", "error", 
+                get_ffprobe_path(), "-v", "error",
                 "-show_entries", "stream=sample_rate,channels", 
                 "-of", "json", str(file_path)
             ]
@@ -114,7 +115,7 @@ class AudioCompiler:
             duration_s = self.pause_duration_s
         channel_layout = "mono" if channels == 1 else "stereo"
         cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", 
+            get_ffmpeg_path(), "-y", "-f", "lavfi",
             "-i", f"anullsrc=r={sample_rate}:cl={channel_layout}",
             "-t", str(duration_s), "-q:a", "9", str(output_path)
         ]
@@ -201,7 +202,7 @@ class AudioCompiler:
                     stream.write(self._concat_entry(trailing_silence_file))
 
             cmd = [
-                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                get_ffmpeg_path(), "-y", "-f", "concat", "-safe", "0",
                 "-i", str(concat_file), "-af", "loudnorm", str(staged_output)
             ]
             run_process(cmd, timeout=process_budget(expected_duration))
