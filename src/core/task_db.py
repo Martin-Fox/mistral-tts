@@ -22,6 +22,7 @@ class TaskDatabase:
             conn = self._get_connection()
             try:
                 with conn:
+                    conn.execute("BEGIN IMMEDIATE")
                     # Create tasks table
                     conn.execute("""
                         CREATE TABLE IF NOT EXISTS tasks (
@@ -34,6 +35,13 @@ class TaskDatabase:
                             created_at REAL NOT NULL
                         )
                     """)
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+                    if "finished_at" not in columns:
+                        conn.execute("ALTER TABLE tasks ADD COLUMN finished_at REAL")
+                    # Legacy finish times are unknown: retain them for a full TTL
+                    # after migration instead of expiring by their creation time.
+                    conn.execute("UPDATE tasks SET finished_at=? WHERE finished_at IS NULL "
+                                 "AND (completed=1 OR status IN ('Completed','Failed','Interrupted'))", (time.time(),))
                     # Create task_logs table
                     conn.execute("""
                         CREATE TABLE IF NOT EXISTS task_logs (
@@ -88,6 +96,10 @@ class TaskDatabase:
             updates.append("error = ?")
             params.append(error)
             
+        if status in ("Completed", "Failed", "Interrupted") or completed is True:
+            updates.append("finished_at = ?")
+            params.append(time.time())
+
         if not updates:
             return
             
@@ -142,7 +154,41 @@ class TaskDatabase:
             conn = self._get_connection()
             try:
                 with conn:
-                    cursor = conn.execute("DELETE FROM tasks WHERE created_at < ?", (cutoff_time,))
+                    cursor = conn.execute("DELETE FROM tasks WHERE finished_at < ? "
+                                          "AND (completed=1 OR status IN ('Completed','Failed','Interrupted'))", (cutoff_time,))
                     return cursor.rowcount
             finally:
                 conn.close()
+
+    def interrupt_unfinished_tasks(self) -> int:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    cursor = conn.execute(
+                        "UPDATE tasks SET status='Interrupted', completed=0, finished_at=?, "
+                        "error='Task interrupted by server restart; resume explicitly.' "
+                        "WHERE completed=0 AND status NOT IN ('Completed','Failed','Interrupted')", (time.time(),))
+                    return cursor.rowcount
+            finally:
+                conn.close()
+
+    def claim_resume(self, task_id: str) -> bool:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    return conn.execute(
+                        "UPDATE tasks SET status='Pending', completed=0, error=NULL, finished_at=NULL "
+                        "WHERE id=? AND completed=0 AND status IN ('Interrupted','Failed')", (task_id,)).rowcount == 1
+            finally:
+                conn.close()
+
+    def resumable_tasks(self) -> list:
+        conn = self._get_connection()
+        try:
+            return [dict(row) for row in conn.execute(
+                "SELECT id,status,percentage,error FROM tasks WHERE completed=0 "
+                "AND status IN ('Interrupted','Failed') ORDER BY created_at DESC LIMIT 50")]
+        finally:
+            conn.close()

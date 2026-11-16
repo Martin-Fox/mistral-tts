@@ -1,7 +1,7 @@
+import asyncio
 import os
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, Input, Button, Label, ProgressBar, Log, Static, Select
@@ -10,7 +10,9 @@ from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
-from src.core.config import get_translation_model, save_translation_model
+from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
+from src.core.storage_retention import check_storage_budget
+from src.core.config import get_translation_model, save_translation_model, load_environment
 
 class BooksmithTUI(App):
     CSS = """
@@ -74,7 +76,7 @@ class BooksmithTUI(App):
     ]
 
     def compose(self) -> ComposeResult:
-        load_dotenv()
+        load_environment()
         api_key = os.getenv("MISTRAL_API_KEY", "")
         openai_key = os.getenv("OPENAI_API_KEY", "")
         current_trans_model = get_translation_model()
@@ -234,7 +236,9 @@ class BooksmithTUI(App):
         openai_key: str = "",
         translation_model: Optional[str] = None
     ):
+        client = None
         try:
+            engine = engine.strip().lower()
             tp = Path(text_path)
             op = Path(output_path)
             
@@ -242,68 +246,56 @@ class BooksmithTUI(App):
                 raise FileNotFoundError(f"Text file not found: {tp}")
             
             op.parent.mkdir(parents=True, exist_ok=True)
-            cache_dir = Path("storage/cache")
-            cache_dir.mkdir(parents=True, exist_ok=True)
-
-            splitter = TextSplitter()
-            
-            # Resolve correct TTS API key
+            await asyncio.to_thread(check_storage_budget)
             tts_api_key = openai_key if engine == "openai" else api_key
-            # Instantiate client via factory
             client = get_tts_client(engine, tts_api_key)
-            
             compiler = AudioCompiler()
+            effective_translation_model = (translation_model or get_translation_model()) if target_lang else None
+            voice = VoiceInput(voice_id, Path(voice_path) if voice_path else None)
+            pb = self.query_one("#progress-bar", ProgressBar)
 
-            if target_lang:
+            async def translate(path, source, target, model):
                 if not api_key:
                     raise ValueError("Mistral API key is required for translation.")
-                source = source_lang if source_lang else "English"
-                self.query_one("#status-label", Static).update(f"Status: Translating to {target_lang}...")
-                self.log_message(f"Translating {tp.name} from {source} to {target_lang}...")
-                translation_client = MistralTTSClient(api_key=api_key, translation_model=translation_model)
-                tp = await translation_client.translate_file(tp, source, target_lang)
-                self.log_message(f"Translation completed. Saved to {tp}")
+                translation_client = MistralTTSClient(api_key=api_key, translation_model=model)
+                translated = await translation_client.translate_file(path, source, target)
+                self.log_message(f"Translation completed. Saved to {translated}")
+                return translated
 
-            self.log_message("Reading text and splitting into chunks...")
-            from src.core.epub_parser import read_input_text
-            text = read_input_text(tp)
-            chunks = splitter.split(text)
-            self.log_message(f"Split into {len(chunks)} chunks.")
+            def report(event):
+                if event.stage == 'Reading Text':
+                    self.log_message("Reading input text...")
+                elif event.stage == 'Translating':
+                    self.query_one("#status-label", Static).update(f"Status: Translating to {target_lang}...")
+                    self.log_message(f"Translating {tp.name} from {source_lang or 'English'} to {target_lang}...")
+                elif event.stage == 'Splitting Text':
+                    self.log_message("Splitting text into chunks...")
+                elif event.stage == 'Text Ready':
+                    pb.total = event.total
+                    pb.progress = 0
+                    self.log_message(f"Split into {event.total} chunks.")
+                elif event.stage == 'Configuring Voice':
+                    self.log_message(f"Cloning voice from {voice.reference}..." if voice.reference else
+                                     f"Using voice: {voice.voice_id or ('alloy' if engine == 'openai' else 'en_paul_neutral')}")
+                elif event.stage == 'Waiting for Cache':
+                    self.query_one("#status-label", Static).update("Status: Waiting for cache...")
+                elif event.stage == 'Generating Chunk':
+                    self.query_one("#status-label", Static).update(f"Status: Generating chunk {event.current}/{event.total}...")
+                elif event.stage == 'Chunk Ready':
+                    pb.advance(1)
+                    self.log_message(f"{'Reused' if event.cached else 'Generated'} chunk {event.current}/{event.total}")
+                elif event.stage == 'Compiling Audiobook':
+                    self.query_one("#status-label", Static).update("Status: Compiling audiobook...")
+                    self.log_message("Compiling final audiobook...")
 
-            if engine == "openai":
-                self.log_message(f"Using OpenAI voice: {voice_id}")
-                client.set_voice_id(voice_id)
-            else:  # engine == "mistral"
-                if voice_path:
-                    vp = Path(voice_path)
-                    if not vp.exists():
-                        raise FileNotFoundError(f"Voice file not found: {vp}")
-                    self.log_message(f"Cloning voice from {vp}...")
-                    await client.clone_voice(vp)
-                else:
-                    self.log_message(f"Using default voice: {voice_id}")
-                    client.set_voice_id(voice_id)
-            
-            pb = self.query_one("#progress-bar", ProgressBar)
-            pb.total = len(chunks)
-            pb.progress = 0
-            
-            chunk_files = []
-            for i, chunk in enumerate(chunks):
-                self.query_one("#status-label", Static).update(f"Status: Generating chunk {i+1}/{len(chunks)}...")
-                chunk_path = cache_dir / f"chunk_{i:04d}.mp3"
-                await client.generate_audio(chunk, chunk_path)
-                chunk_files.append(chunk_path)
-                pb.advance(1)
-                self.log_message(f"Generated chunk {i+1}/{len(chunks)}")
-
-            self.query_one("#status-label", Static).update("Status: Compiling audiobook...")
-            self.log_message("Compiling final audiobook...")
-            compiler.compile(chunk_files, op)
-            
+            prepared = await prepare_text(
+                tp, splitter=TextSplitter(), source_lang=source_lang or None, target_lang=target_lang or None,
+                translation_model=effective_translation_model, translate=translate, progress=report)
+            await run_pipeline(prepared, client=client, engine=engine, voice=voice, output_path=op,
+                               compiler_factory=lambda: compiler, progress=report)
             self.query_one("#status-label", Static).update("Status: Completed!")
             self.log_message(f"Success! Audiobook saved to {op}")
-            
+
         except Exception as e:
             self.log_message(f"Error: {str(e)}")
             if "invalid model" in str(e).lower() and hasattr(client, "list_models"):
@@ -314,7 +306,7 @@ class BooksmithTUI(App):
                 else:
                     self.log_message("Could not fetch available models.")
             
-            if "voice" in str(e).lower() and "not found" in str(e).lower():
+            if client is not None and "voice" in str(e).lower() and "not found" in str(e).lower():
                 self.log_message("Attempting to fetch available voices...")
                 voices = await client.list_voices()
                 if voices:

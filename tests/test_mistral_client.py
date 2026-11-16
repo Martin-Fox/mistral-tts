@@ -47,7 +47,7 @@ async def test_mistral_generate_audio_success(tmp_path):
     out_file = tmp_path / "chunk_ok.mp3"
 
     # Patch ffprobe subprocess run to return valid duration
-    with patch("subprocess.run") as mock_sub:
+    with patch("src.api.mistral_client.run_process_async", new_callable=AsyncMock) as mock_sub:
         mock_proc = MagicMock()
         mock_proc.stdout = "2.5\n"
         mock_sub.return_value = mock_proc

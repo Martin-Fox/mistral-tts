@@ -1,19 +1,21 @@
 import asyncio
 import contextvars
-import hashlib
 import json
 import logging
 import os
 import re
 import sys
 import time
+import threading
+import tempfile
+import zipfile
+import xml.etree.ElementTree as ET
 import uuid
 from pathlib import Path
 from typing import Optional
 
 import secrets
-from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
+from fastapi import APIRouter, FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator, ValidationError
@@ -21,12 +23,22 @@ from pydantic import BaseModel, field_validator, ValidationError
 from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
+from src.core.resource_limits import ResourceLimits, ResourceLimitExceeded, check_text
+from src.web_limits import JobController, GenerationRequestLimits, GenerationRoute
 from src.core.audio_compiler import AudioCompiler
+from src.core.cache_io import run_blocking_until_done
+from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
+from src.core.auth import hash_password, verify_password, load_credentials, save_credentials
+from src.core.login_limiter import LoginLimiter
+from src.core.task_store import save_job, load_job, task_directory, load_translation, save_translation, validate_task_id, save_cache_reference
+from src.core.storage_retention import StoragePolicy, StorageBudgetExceeded, check_storage_budget, sweep_storage
+from src.core.process_runner import process_budget
+from src.api.retry import validate_retry_settings
 from src.core.task_db import TaskDatabase
-from src.core.config import get_translation_model, save_translation_model
+from src.core.config import get_translation_model, save_translation_model, load_environment
 
 # Load environment variables from .env
-load_dotenv()
+load_environment()
 
 def get_static_dir() -> Path:
     """Resolves static assets directory for PyInstaller bundle or local development."""
@@ -38,10 +50,10 @@ def get_static_dir() -> Path:
         return local_static
     return Path("src/web/static")
 
-STATIC_DIR = get_static_dir()
+# Static assets can live in a read-only source or PyInstaller directory.
+STATIC_DIRECTORY = get_static_dir()
 
-# Ensure directories exist on startup
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
+# Only mutable storage is created at startup.
 Path("storage/cache").mkdir(parents=True, exist_ok=True)
 Path("storage/output").mkdir(parents=True, exist_ok=True)
 
@@ -56,28 +68,46 @@ AUTH_FILE = Path("storage/auth.json")
 APP_USERNAME = os.getenv("APP_USERNAME", "admin")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "admin")
 
-if AUTH_FILE.exists():
+APP_PASSWORD_HASH = None
+
+# Process-local sessions: run the WebUI with one worker.
+active_sessions: dict[str, float] = {}
+auth_lock = threading.RLock()
+login_limiter = LoginLimiter()
+SESSION_TTL_SECONDS = 28800
+SESSION_COOKIE_SECURE = False
+
+
+def configure_sessions():
+    global SESSION_TTL_SECONDS, SESSION_COOKIE_SECURE
     try:
-        with open(AUTH_FILE, "r") as f:
-            auth_data = json.load(f)
-            APP_USERNAME = auth_data.get("username", APP_USERNAME)
-            APP_PASSWORD = auth_data.get("password", APP_PASSWORD)
-        logger.info("Loaded persisted credentials from storage/auth.json")
-    except Exception as e:
-        logger.error(f"Failed to load persisted credentials: {e}")
+        ttl = int(os.getenv("SESSION_TTL_SECONDS", "28800"))
+        workers = int(os.getenv("WEB_CONCURRENCY", "1"))
+    except ValueError:
+        raise RuntimeError("SESSION_TTL_SECONDS and WEB_CONCURRENCY must be positive integers") from None
+    secure = os.getenv("SESSION_COOKIE_SECURE", "false").lower().strip()
+    if ttl <= 0 or workers != 1 or secure not in ("true", "false"):
+        raise RuntimeError(
+            "Use SESSION_TTL_SECONDS > 0, SESSION_COOKIE_SECURE=true/false "
+            "and a single WebUI worker (WEB_CONCURRENCY=1)."
+        )
+    SESSION_TTL_SECONDS = ttl
+    SESSION_COOKIE_SECURE = secure == "true"
 
-if APP_USERNAME == "admin" and APP_PASSWORD == "admin":
-    logger.warning("Using default credentials (admin/admin). Please set APP_USERNAME and APP_PASSWORD in your environment or .env file.")
 
-# Active sessions store (in-memory)
-active_sessions = set()
+def session_is_valid(session_id: Optional[str]) -> bool:
+    with auth_lock:
+        now = time.monotonic()
+        for expired in [sid for sid, expiry in active_sessions.items() if expiry <= now]:
+            active_sessions.pop(expired, None)
+        return bool(session_id and session_id in active_sessions)
 
 def verify_session(session_id: Optional[str] = Cookie(None)):
     """
     Validates the session cookie.
     Designed as a pluggable dependency to allow easy transition to OIDC/Pocket-ID in the future.
     """
-    if not session_id or session_id not in active_sessions:
+    if not session_is_valid(session_id):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
@@ -88,8 +118,24 @@ app = FastAPI(
     title="Mistral TTS Booksmith API"
 )
 
+job_controller = JobController(running=2, queued=2)
+app.add_middleware(GenerationRequestLimits, controller=lambda: job_controller,
+                   storage_check=lambda: check_storage_budget())
+
+
+async def read_upload_bounded(upload: UploadFile, limit: int) -> bytes:
+    content = bytearray()
+    while True:
+        chunk = await upload.read(min(65536, limit - len(content) + 1))
+        if not chunk:
+            return bytes(content)
+        content.extend(chunk)
+        if len(content) > limit:
+            raise HTTPException(status_code=413, detail="Uploaded file exceeds its size limit")
+
+
 # Mount static files directory
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
 
 
 
@@ -119,71 +165,6 @@ global_log_handler = TaskLogHandler(db)
 logging.getLogger("booksmith").addHandler(global_log_handler)
 logging.getLogger("src").addHandler(global_log_handler)
 
-def get_cache_key(
-    text: str,
-    voice_preset: Optional[str],
-    voice_manual_id: Optional[str],
-    voice_bytes: Optional[bytes],
-    source_lang: Optional[str],
-    target_lang: Optional[str],
-    translation_model: Optional[str] = None
-) -> str:
-    """
-    Generates a unique cache key based on text, voice, and translation parameters.
-
-    Args:
-        text: Source text chunk to synthesize.
-        voice_preset: Preset voice name if used.
-        voice_manual_id: Custom voice ID if used.
-        voice_bytes: Reference voice audio bytes for cloning.
-        source_lang: Source language code/name.
-        target_lang: Target language code/name.
-        translation_model: Mistral model ID used for translation.
-
-    Returns:
-        str: SHA-256 hexadecimal hash string.
-    """
-    hasher = hashlib.sha256()
-    hasher.update(text.encode("utf-8"))
-    if voice_preset:
-        hasher.update(voice_preset.encode("utf-8"))
-    if voice_manual_id:
-        hasher.update(voice_manual_id.encode("utf-8"))
-    if voice_bytes:
-        hasher.update(voice_bytes)
-    if source_lang:
-        hasher.update(source_lang.encode("utf-8"))
-    if target_lang:
-        hasher.update(target_lang.encode("utf-8"))
-    if translation_model:
-        hasher.update(translation_model.encode("utf-8"))
-    return hasher.hexdigest()
-
-def load_manifest(manifest_path: Path) -> dict:
-    """Loads cache manifest file if it exists."""
-    if manifest_path.exists():
-        try:
-            with open(manifest_path, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"chunks": [], "completed": []}
-
-def save_manifest(manifest_path: Path, manifest: dict):
-    """Saves cache manifest file atomically using a temporary file and replace."""
-    temp_path = manifest_path.with_suffix(".tmp")
-    try:
-        with open(temp_path, "w") as f:
-            json.dump(manifest, f, indent=4)
-        temp_path.replace(manifest_path)
-    except Exception as e:
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
-        raise e
-
 async def run_generation_pipeline(
     task_id: str,
     api_key: str,
@@ -197,19 +178,25 @@ async def run_generation_pipeline(
     output_filename: str,
     engine: str = "mistral",
     openai_key: Optional[str] = None,
-    translation_model: Optional[str] = None
+    translation_model: Optional[str] = None,
+    input_encoding: Optional[str] = None
 ):
     """
     Asynchronous pipeline task that handles file translation, voice cloning,
     audio chunk generation, and final compilation.
     """
+    saved_job = (task_directory(task_id) / "spec.json").exists()
+    engine = engine.strip().lower()
     text_path = None
     voice_path = None
-    translated_path = None
     task_temp_dir = None
 
     token = current_task_id.set(task_id)
     try:
+        if saved_job:
+            parameters = load_job(task_id)
+            translation_model = parameters["translation_model"]
+            input_encoding = parameters["input_encoding"]
         db.update_task(task_id, status="Preparing Files")
         logger.info(f"Starting audiobook generation task: {task_id}")
 
@@ -226,6 +213,7 @@ async def run_generation_pipeline(
                 f.write(content)
             logger.info(f"Saved uploaded text file to {text_path}")
         elif text_content is not None:
+            input_encoding = "utf-8"
             text_path = task_temp_dir / "input.txt"
             with open(text_path, "w", encoding="utf-8") as f:
                 f.write(text_content)
@@ -234,142 +222,72 @@ async def run_generation_pipeline(
             raise ValueError("No text input provided.")
 
         # 2. Save voice file to a temporary path if provided
-        voice_bytes = None
         if voice_file_data:
             filename, content = voice_file_data
-            voice_bytes = content
             suffix = Path(filename).suffix or ".mp3"
             voice_path = task_temp_dir / f"voice_{task_id}{suffix}"
             with open(voice_path, "wb") as f:
                 f.write(content)
             logger.info(f"Saved uploaded voice file to {voice_path}")
 
-        # Read base text content
-        from src.core.epub_parser import read_input_text
-        text = read_input_text(text_path)
+        effective_translation_model = (translation_model or get_translation_model()) if target_lang else None
 
-        # Generate cache key using parameters and inputs
-        cache_key = get_cache_key(
-            text=text,
-            voice_preset=voice_preset,
-            voice_manual_id=voice_manual_id,
-            voice_bytes=voice_bytes,
-            source_lang=source_lang,
-            target_lang=target_lang,
-            translation_model=translation_model
-        )
-        cache_dir = Path("storage/cache") / cache_key
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = cache_dir / "manifest.json"
+        async def translate(path, source, target, model):
+            translation_client = MistralTTSClient(api_key=api_key, translation_model=model)
+            translated = load_translation(task_id) if saved_job else None
+            if translated is None:
+                if saved_job:
+                    translation_client.translation_cache_dir = task_directory(task_id) / "translation-cache"
+                    translated = await translation_client.translate_file(
+                        path, source, target,
+                        output_filename=f"{task_id}_translated{'.srt' if path.suffix.lower() == '.srt' else '.txt'}",
+                        input_encoding=input_encoding)
+                    translated = save_translation(task_id, translated)
+                else:
+                    translated = await translation_client.translate_file(path, source, target, input_encoding=input_encoding)
+            logger.info(f"Translation completed. Translated file: {translated}")
+            return translated
 
-        # 3. Translation step
-        if target_lang:
-            db.update_task(task_id, status="Translating")
-            source = source_lang or "English"
-            logger.info(f"Translating text from {source} to {target_lang}...")
-            translation_client = MistralTTSClient(api_key=api_key, translation_model=translation_model)
-            translated_path = await translation_client.translate_file(text_path, source, target_lang)
-            logger.info(f"Translation completed. Translated file: {translated_path}")
-            text = read_input_text(translated_path)
+        def report(event):
+            if event.stage in ('Translating', 'Splitting Text', 'Configuring Voice', 'Waiting for Cache',
+                               'Generating Audio', 'Compiling Audiobook'):
+                db.update_task(task_id, status=event.stage)
+            if event.stage == 'Text Ready':
+                logger.info(f"Text split into {event.total} semantic chunks (total characters: {event.characters}).")
+            elif event.stage == 'Translating':
+                logger.info(f"Translating text from {source_lang or 'English'} to {target_lang}...")
+            elif event.stage == 'Generating Chunk':
+                action = 'Reusing cached audio' if event.cached else 'Generating audio'
+                logger.info(f"{action} for chunk {event.current}/{event.total}...")
+            elif event.stage == 'Chunk Ready':
+                db.update_task(task_id, percentage=int(event.current / event.total * 90))
+            elif event.stage == 'Compiling Audiobook':
+                logger.info(f"Compiling final audiobook file from {event.total} chunks...")
 
-        # 4. Split text into semantic chunks
-        db.update_task(task_id, status="Splitting Text")
-        splitter = TextSplitter()
-        chunks = splitter.split(text)
-        total_chunks = len(chunks)
-        total_chars = sum(len(c) for c in chunks)
-        logger.info(f"Text split into {total_chunks} semantic chunks (total characters: {total_chars}).")
-        if total_chunks == 0:
-            raise ValueError("The split text has 0 chunks.")
-
-        # Resolve correct TTS API key and client
+        prepared = await prepare_text(
+            text_path, splitter=TextSplitter(), source_lang=source_lang, target_lang=target_lang,
+            translation_model=effective_translation_model, input_encoding=input_encoding,
+            translate=translate, progress=report)
         tts_api_key = openai_key if engine == "openai" else api_key
         client = get_tts_client(engine, tts_api_key)
+        requested_name = Path(output_filename)
+        output_stem = requested_name.stem.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+        published_filename = f"{task_id}_{output_stem}{requested_name.suffix}"
+        output_path = Path("storage/output") / published_filename
 
-        # 5. Clone or configure voice
-        db.update_task(task_id, status="Configuring Voice")
-        if engine == "openai":
-            voice_id = voice_preset or voice_manual_id or "alloy"
-            logger.info(f"Setting OpenAI voice to: {voice_id}")
-            client.set_voice_id(voice_id)
-        else:
-            # engine == "mistral"
-            if voice_path:
-                logger.info("Cloning voice profile from uploaded file...")
-                await client.clone_voice(voice_path)
-            elif voice_preset:
-                logger.info(f"Setting voice preset to: {voice_preset}")
-                client.set_voice_id(voice_preset)
-            elif voice_manual_id:
-                logger.info(f"Setting voice ID to: {voice_manual_id}")
-                client.set_voice_id(voice_manual_id)
-            else:
-                logger.info("No voice specified. Defaulting to en_paul_neutral.")
-                client.set_voice_id("en_paul_neutral")
+        def cache_ready(directory):
+            if saved_job:
+                save_cache_reference(task_id, directory.name)
 
-        # 6. Load manifest and generate audio chunks
-        db.update_task(task_id, status="Generating Audio")
-        manifest = load_manifest(manifest_path)
-        manifest["chunks"] = chunks
-
-        chunk_files = []
-        for i, chunk in enumerate(chunks):
-            chunk_filename = f"chunk_{i:04d}.mp3"
-            chunk_path = cache_dir / chunk_filename
-            chunk_files.append(chunk_path)
-
-            if (
-                chunk_filename in manifest.get("completed", [])
-                and len(manifest.get("chunks", [])) > i
-                and manifest["chunks"][i] == chunk
-                and chunk_path.exists()
-                and chunk_path.stat().st_size > 100
-            ):
-                logger.info(f"Chunk {i+1}/{total_chunks} already generated (cached).")
-                percentage = int(((i + 1) / total_chunks) * 90)
-                db.update_task(task_id, percentage=percentage)
-                continue
-
-            logger.info(f"Generating audio for chunk {i+1}/{total_chunks}...")
-            await client.generate_audio(chunk, chunk_path)
-
-            if "completed" not in manifest:
-                manifest["completed"] = []
-            manifest["completed"].append(chunk_filename)
-            save_manifest(manifest_path, manifest)
-
-            percentage = int(((i + 1) / total_chunks) * 90)
-            db.update_task(task_id, percentage=percentage)
-
-        # Verify all chunks have corresponding valid chunk files before compiling
-        if len(chunk_files) != total_chunks:
-            raise RuntimeError(f"Chunk count mismatch: expected {total_chunks}, got {len(chunk_files)} files.")
-        for idx, cf in enumerate(chunk_files):
-            if not cf.exists() or cf.stat().st_size <= 100:
-                raise RuntimeError(
-                    f"Missing or invalid chunk audio file before compilation: {cf} (chunk {idx + 1}/{total_chunks})"
-                )
-
-        # 7. Compile final audiobook
-        db.update_task(task_id, status="Compiling Audiobook")
-        logger.info(f"Compiling final audiobook file from {total_chunks} chunks...")
-        compiler = AudioCompiler()
-        output_path = Path("storage/output") / output_filename
-        compilation_meta = await asyncio.to_thread(compiler.compile, chunk_files, output_path)
+        result = await run_pipeline(
+            prepared, client=client, engine=engine,
+            voice=VoiceInput(voice_preset or voice_manual_id, voice_path),
+            output_path=output_path, compiler_factory=AudioCompiler, progress=report, cache_ready=cache_ready)
         logger.info(
             f"Audiobook compiled successfully. Saved to {output_path} "
-            f"(verified duration: {compilation_meta.get('output_duration', 0):.2f}s, "
-            f"expected ~{compilation_meta.get('expected_duration', 0):.2f}s across {total_chunks} chunks)"
-        )
-
-        # 8. Mark task as completed
-        db.update_task(
-            task_id,
-            percentage=100,
-            status="Completed",
-            completed=True,
-            audio_file=output_filename
-        )
+            f"(verified duration: {result.compilation.get('output_duration', 0):.2f}s, "
+            f"expected ~{result.compilation.get('expected_duration', 0):.2f}s across {result.chunk_count} chunks)")
+        db.update_task(task_id, percentage=100, status="Completed", completed=True, audio_file=published_filename)
 
     except Exception as e:
         logger.error(f"Error in generation pipeline: {e}", exc_info=True)
@@ -404,33 +322,40 @@ class ChangePasswordRequest(BaseModel):
 
 @app.post("/api/auth/change-password")
 def change_password(request: ChangePasswordRequest, session: str = Depends(verify_session)):
+    # Serialize password verification/publication against concurrent logins.
+    with auth_lock:
+        return _change_password(request)
+
+
+def _change_password(request: ChangePasswordRequest):
     """
     Endpoint to change the password for the current user.
     Persists the new password to storage/auth.json so it survives restarts.
     """
-    global APP_PASSWORD
+    global APP_PASSWORD_HASH
     
     # Verify current password
-    if not secrets.compare_digest(request.current_password, APP_PASSWORD):
+    if not verify_password(request.current_password, APP_PASSWORD_HASH):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect current password"
         )
     
     # Validate new password
-    if not request.new_password or len(request.new_password.strip()) < 4:
+    if not request.new_password or len(request.new_password.strip()) < 4 or request.new_password.strip() == "admin":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be at least 4 characters long"
+            detail="New password must be at least 4 characters long and must not be admin"
         )
         
     # Persist the new credentials
     try:
-        with open(AUTH_FILE, "w") as f:
-            json.dump({"username": APP_USERNAME, "password": request.new_password}, f, indent=4)
+        new_hash = hash_password(request.new_password)
+        save_credentials(AUTH_FILE, APP_USERNAME, new_hash)
         
         # Update in-memory
-        APP_PASSWORD = request.new_password
+        APP_PASSWORD_HASH = new_hash
+        active_sessions.clear()
         logger.info(f"Password successfully changed for user: {APP_USERNAME}")
         return {"message": "Password updated successfully. Please log in with your new credentials."}
     except Exception as e:
@@ -445,12 +370,25 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
-def login(request: LoginRequest, response: Response):
+def login(request: LoginRequest, response: Response, http_request: Request):
+    source = http_request.client.host if http_request.client else "unknown"
+    retry_after = login_limiter.consume(source, request.username)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)}
+        )
+    with auth_lock:
+        return _login(request, response)
+
+
+def _login(request: LoginRequest, response: Response):
     """
     Verifies credentials and sets a session cookie.
     """
-    is_correct_username = secrets.compare_digest(request.username, APP_USERNAME)
-    is_correct_password = secrets.compare_digest(request.password, APP_PASSWORD)
+    is_correct_username = secrets.compare_digest(request.username.encode("utf-8"), APP_USERNAME.encode("utf-8"))
+    is_correct_password = verify_password(request.password, APP_PASSWORD_HASH)
     if not (is_correct_username and is_correct_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -458,13 +396,15 @@ def login(request: LoginRequest, response: Response):
         )
     
     session_id = str(uuid.uuid4())
-    active_sessions.add(session_id)
+    session_is_valid(None)  # Evict expired entries before adding a session.
+    active_sessions[session_id] = time.monotonic() + SESSION_TTL_SECONDS
     response.set_cookie(
         key="session_id",
         value=session_id,
         httponly=True,
         samesite="lax",
-        secure=False
+        secure=SESSION_COOKIE_SECURE,
+        max_age=SESSION_TTL_SECONDS
     )
     return {"message": "Login successful"}
 
@@ -474,9 +414,9 @@ def logout(request: Request, response: Response):
     Clears the session cookie and removes the session from memory.
     """
     session_id = request.cookies.get("session_id")
-    if session_id in active_sessions:
-        active_sessions.remove(session_id)
-    response.delete_cookie(key="session_id")
+    with auth_lock:
+        active_sessions.pop(session_id, None)
+    response.delete_cookie(key="session_id", httponly=True, samesite="lax", secure=SESSION_COOKIE_SECURE)
     return {"message": "Logged out successfully"}
 
 @app.get("/api/auth/status")
@@ -485,7 +425,7 @@ def get_auth_status(request: Request):
     Returns the current authentication status of the user.
     """
     session_id = request.cookies.get("session_id")
-    if session_id and session_id in active_sessions:
+    if session_is_valid(session_id):
         return {"authenticated": True, "username": APP_USERNAME}
     return {"authenticated": False}
 
@@ -558,7 +498,7 @@ async def update_config(
 @app.get("/")
 def read_root():
     """Serves the main frontend page."""
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIRECTORY / "index.html")
 
 @app.get("/api/audio/{filename}")
 def get_audio(filename: str, session: str = Depends(verify_session)):
@@ -587,6 +527,8 @@ async def get_progress(
     async def event_generator():
         current_last_id = last_log_id
         while True:
+            if not session_is_valid(session):
+                break
             task_state = db.get_task(task_id)
             if not task_state:
                 break
@@ -606,13 +548,16 @@ async def get_progress(
             }
             
             yield f"data: {json.dumps(payload)}\n\n"
-            if task_state["completed"] or task_state["status"] == "Failed":
+            if task_state["completed"] or task_state["status"] in ("Failed", "Interrupted"):
                 break
             await asyncio.sleep(0.5)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-@app.post("/api/generate")
+generation_router = APIRouter(route_class=GenerationRoute)
+
+
+@generation_router.post("/api/generate")
 async def generate_audiobook(
     background_tasks: BackgroundTasks,
     text_file: Optional[UploadFile] = File(None),
@@ -631,8 +576,11 @@ async def generate_audiobook(
 ):
     """
     Triggers the background generation task and returns a unique task ID immediately.
-    Includes eviction of tasks older than 24 hours to prevent memory leaks.
+    Storage retention runs separately and protects unfinished/resumable tasks.
     """
+    engine = engine.strip().lower()
+    if engine not in ("mistral", "openai"):
+        raise HTTPException(status_code=400, detail="Unknown TTS engine")
     if not text_file and not text_content:
         raise HTTPException(status_code=400, detail="Either text_file or text_content must be provided.")
 
@@ -697,19 +645,38 @@ async def generate_audiobook(
 
     task_id = str(uuid.uuid4())
 
+    limits = ResourceLimits.from_env()
+    if text_content is not None:
+        try:
+            check_text(text_content)
+        except ResourceLimitExceeded as error:
+            raise HTTPException(status_code=413, detail=str(error)) from None
+
     # Read uploaded file contents in the request handler to prevent closed file descriptors in background task
     text_file_data = None
     if text_file:
-        text_bytes = await text_file.read()
+        text_bytes = await read_upload_bounded(text_file, limits.max_text_upload_bytes)
         text_file_data = (text_file.filename, text_bytes)
 
     voice_file_data = None
     if voice_file:
-        voice_bytes = await voice_file.read()
+        voice_bytes = await read_upload_bounded(voice_file, limits.max_voice_upload_bytes)
         voice_file_data = (voice_file.filename, voice_bytes)
 
-    # Initialize task state in database
-    db.create_task(task_id)
+    # Validate parsed size (including EPUB expansion) before creating a task or
+    # constructing an API client. Keep the original upload for the existing pipeline.
+    if text_file_data:
+        from src.core.epub_parser import read_input_text
+        with tempfile.TemporaryDirectory(prefix="booksmith-preflight-") as directory:
+            probe = Path(directory) / ("input" + Path(text_file_data[0] or "input.txt").suffix)
+            probe.write_bytes(text_file_data[1])
+            try:
+                await run_blocking_until_done(read_input_text, probe)
+            except ResourceLimitExceeded as error:
+                raise HTTPException(status_code=413, detail=str(error)) from None
+            except (ValueError, zipfile.BadZipFile, ET.ParseError):
+                raise HTTPException(status_code=400, detail="Invalid input document") from None
+
 
     # Enqueue background execution task
     pipeline_kwargs = {
@@ -729,7 +696,18 @@ async def generate_audiobook(
     if translation_model is not None:
         pipeline_kwargs["translation_model"] = translation_model
 
+    incoming_size = sum(len(upload[1]) for upload in (text_file_data, voice_file_data) if upload)
+    if text_file_data is None:
+        incoming_size += len((text_content or '').encode('utf-8'))
+    try:
+        await asyncio.to_thread(check_storage_budget, additional_bytes=incoming_size * 2)
+    except StorageBudgetExceeded as error:
+        raise HTTPException(status_code=507, detail=str(error)) from None
+    save_job(task_id, pipeline_kwargs)
+    db.create_task(task_id)
+
     background_tasks.add_task(
+        job_controller.run,
         run_generation_pipeline,
         **pipeline_kwargs
     )
@@ -737,16 +715,62 @@ async def generate_audiobook(
     return {"task_id": task_id}
 
 
+@app.get("/api/tasks")
+def list_resumable_tasks(session: str = Depends(verify_session)):
+    return {"tasks": [task for task in db.resumable_tasks()
+                      if (task_directory(task['id']) / 'spec.json').exists()]}
+
+
+@generation_router.post("/api/resume/{task_id}")
+async def resume_task(task_id: str, background_tasks: BackgroundTasks,
+                      api_key: Optional[str] = Form(None), openai_key: Optional[str] = Form(None),
+                      session: str = Depends(verify_session)):
+    try:
+        task_id = validate_task_id(task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid task ID") from None
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task['status'] not in ('Interrupted', 'Failed') or task['completed']:
+        raise HTTPException(status_code=409, detail="Task is not resumable")
+    try:
+        arguments = load_job(task_id)
+    except (OSError, ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=409, detail="Saved task inputs are missing, changed or incompatible") from None
+    mistral = (api_key or '').strip() or os.getenv('MISTRAL_API_KEY', '')
+    openai = (openai_key or '').strip() or os.getenv('OPENAI_API_KEY', '')
+    if (arguments['engine'] == 'mistral' or arguments['target_lang']) and not mistral:
+        raise HTTPException(status_code=400, detail="Mistral API key required to resume")
+    if arguments['engine'] == 'openai' and not openai:
+        raise HTTPException(status_code=400, detail="OpenAI API key required to resume")
+    incoming_size = sum(len(upload[1]) for upload in (arguments['text_file_data'], arguments['voice_file_data']) if upload)
+    try:
+        await asyncio.to_thread(check_storage_budget, additional_bytes=incoming_size)
+    except StorageBudgetExceeded as error:
+        raise HTTPException(status_code=507, detail=str(error)) from None
+    if not db.claim_resume(task_id):
+        raise HTTPException(status_code=409, detail="Task was already resumed")
+    background_tasks.add_task(job_controller.run, run_generation_pipeline,
+                              task_id=task_id, api_key=mistral, openai_key=openai, **arguments)
+    return {"task_id": task_id}
+
+
+app.include_router(generation_router)
+
+
 async def task_purger_loop():
-    """
-    Loop infinitely to evict tasks older than 24 hours from the database.
-    """
+    """Plan or apply state-aware retention without blocking the event loop."""
     while True:
         try:
-            cutoff = time.time() - 86400
-            purged = db.delete_old_tasks(cutoff)
-            if purged > 0:
-                logger.info(f"Background purger evicted {purged} tasks older than 24 hours.")
+            policy = StoragePolicy.from_env()
+            report = await run_blocking_until_done(
+                lambda: sweep_storage(Path('storage'), db.db_path, policy=policy,
+                                      dry_run=not policy.storage_cleanup_enabled))
+            if report['candidates'] or report['expired_tasks'] or report['skipped']:
+                logger.info("Storage retention dry_run=%s: %d artifacts, %d completed tasks, %d skipped",
+                            report['dry_run'], len(report['candidates']),
+                            len(report['expired_tasks']), len(report['skipped']))
         except Exception as e:
             logger.error(f"Error in task_purger_loop: {e}", exc_info=True)
         await asyncio.sleep(1800)
@@ -754,5 +778,16 @@ async def task_purger_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    global APP_USERNAME, APP_PASSWORD, APP_PASSWORD_HASH, job_controller
+    validate_retry_settings()
+    StoragePolicy.from_env()
+    process_budget()
+    process_budget(probe=True)
+    limits = ResourceLimits.from_env()
+    job_controller = JobController(limits.max_running_jobs, limits.max_queued_jobs)
+    configure_sessions()
+    APP_USERNAME, APP_PASSWORD_HASH = load_credentials(AUTH_FILE, APP_USERNAME, APP_PASSWORD)
+    APP_PASSWORD = None
+    db.interrupt_unfinished_tasks()
     asyncio.create_task(task_purger_loop())
 

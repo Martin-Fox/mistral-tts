@@ -37,16 +37,28 @@ document.addEventListener('DOMContentLoaded', () => {
     let renderedLogCount = 0;
     
     // === 1. API Key Management ===
-    // Load saved API key
-    const savedApiKey = localStorage.getItem('api_key');
-    if (savedApiKey) {
-        apiKeyInput.value = savedApiKey;
+    function clearStoredApiKeys() {
+        for (const key of ['api_key', 'openai_key']) {
+            try {
+                localStorage.removeItem(key);
+            } catch {
+                // Storage can be disabled by browser policy. Keep the UI usable.
+            }
+        }
     }
-    const savedOpenaiKey = localStorage.getItem('openai_key');
-    if (savedOpenaiKey && openaiKeyInput) {
-        openaiKeyInput.value = savedOpenaiKey;
+
+    function clearApiKeyInputs() {
+        for (const input of [apiKeyInput, openaiKeyInput]) {
+            if (input) {
+                input.value = '';
+                input.type = 'password';
+            }
+        }
     }
-    
+
+    // Discard keys retained by older versions; never restore them into the form.
+    clearStoredApiKeys();
+
     // Toggle API Key visibility
     toggleApiVisibilityBtn.addEventListener('click', () => {
         const isPassword = apiKeyInput.type === 'password';
@@ -360,7 +372,6 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         
         // --- Validation ---
-        const apiKey = apiKeyInput.value.trim();
 
         const textFileInput = document.getElementById('text-file');
         const textContentInput = document.getElementById('text-content');
@@ -373,21 +384,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Save or clear API key in localStorage
-        if (apiKey) {
-            localStorage.setItem('api_key', apiKey);
-        } else {
-            localStorage.removeItem('api_key');
-        }
-
-        const openaiKey = openaiKeyInput ? openaiKeyInput.value.trim() : '';
-        if (openaiKey) {
-            localStorage.setItem('openai_key', openaiKey);
-        } else {
-            localStorage.removeItem('openai_key');
-        }
-
-
         // --- Form Data Assembly & Cleanup ---
         const formData = new FormData(generatorForm);
         const voiceMode = formData.get('voice_mode');
@@ -531,8 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     handleTaskSuccess(state.audio_file, originalBtnText);
                 } 
                 // Check for error
-                else if (state.error || state.status === 'Failed') {
-                    handleTaskFailure(state.error || 'Pipeline execution failed.', originalBtnText);
+                else if (state.error || state.status === 'Failed' || state.status === 'Interrupted') {
+                    handleTaskFailure(state.error || 'Pipeline execution failed.', originalBtnText, state.status);
                 }
 
             } catch (err) {
@@ -582,13 +578,14 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtnText.textContent = originalBtnText;
     }
 
-    function handleTaskFailure(errorMessage, originalBtnText) {
+    function handleTaskFailure(errorMessage, originalBtnText, taskStatus) {
+        loadResumableTasks();
         isFinished = true;
         if (eventSource) {
             eventSource.close();
         }
 
-        statusBadge.textContent = 'Failed';
+        statusBadge.textContent = taskStatus === 'Interrupted' ? 'Interrupted' : 'Failed';
         appendConsoleLine(`Error: ${errorMessage}`, 'error-line');
 
         // Re-enable submit button
@@ -645,7 +642,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 
                 if (response.ok) {
-                    showPasswordStatus('Password updated successfully. The new password will be required on your next login.', 'success');
+                    showPasswordStatus('Password updated. All sessions have been signed out.', 'success');
+                    await checkAuthStatus();
+                    showLoginStatus('Password updated. Sign in with your new password.', 'success');
                     passwordForm.reset();
                 } else {
                     const data = await response.json();
@@ -712,7 +711,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.authenticated) {
                 if (loginOverlay) loginOverlay.classList.add('hidden');
                 loadConfig();
+                loadResumableTasks();
             } else {
+                clearStoredApiKeys();
+                clearApiKeyInputs();
                 if (loginOverlay) loginOverlay.classList.remove('hidden');
             }
         } catch (error) {
@@ -750,6 +752,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     showLoginStatus('Login successful.', 'success');
                     loginForm.reset();
                     loadConfig();
+                    loadResumableTasks();
                     setTimeout(() => {
                         if (loginOverlay) loginOverlay.classList.add('hidden');
                     }, 500);
@@ -775,6 +778,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch (error) {
                     console.error('Error during logout request:', error);
                 } finally {
+                    clearStoredApiKeys();
+                    clearApiKeyInputs();
                     // Show login overlay again immediately and reset form
                     if (loginOverlay) loginOverlay.classList.remove('hidden');
                     if (settingsCard) settingsCard.classList.add('hidden');
@@ -782,6 +787,64 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         });
+    }
+
+    const resumePanel = document.createElement('section');
+    resumePanel.className = 'card hidden';
+    const resumeTitle = document.createElement('h2');
+    resumeTitle.textContent = 'Interrupted / failed tasks';
+    const resumeList = document.createElement('div');
+    const refreshTasks = document.createElement('button');
+    refreshTasks.type = 'button';
+    refreshTasks.textContent = 'Refresh tasks';
+    refreshTasks.addEventListener('click', loadResumableTasks);
+    resumePanel.append(resumeTitle, refreshTasks, resumeList);
+    progressCard.before(resumePanel);
+
+    async function loadResumableTasks() {
+        try {
+            const response = await fetch('/api/tasks');
+            if (!response.ok) return;
+            const data = await response.json();
+            resumeList.replaceChildren();
+            resumePanel.classList.toggle('hidden', !data.tasks.length);
+            for (const task of data.tasks) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = `Resume ${task.id} (${task.status}, ${task.percentage}%)`;
+                button.addEventListener('click', async () => {
+                    button.disabled = true;
+                    try {
+                        const form = new FormData();
+                        form.set('api_key', apiKeyInput.value.trim());
+                        form.set('openai_key', openaiKeyInput ? openaiKeyInput.value.trim() : '');
+                        const resumed = await fetch(`/api/resume/${encodeURIComponent(task.id)}`, {
+                            method: 'POST', body: form
+                        });
+                        if (!resumed.ok) {
+                            const error = await resumed.json();
+                            throw new Error(error.detail || 'Failed to resume task');
+                        }
+                        if (eventSource) eventSource.close();
+                        isFinished = false;
+                        submitBtn.disabled = true;
+                        progressCard.classList.remove('hidden');
+                        playerCard.classList.add('hidden');
+                        consoleLogs.replaceChildren();
+                        renderedLogCount = 0;
+                        startProgressStream(task.id, 'Generate Audiobook');
+                        await loadResumableTasks();
+                    } catch (error) {
+                        alert(error.message);
+                    } finally {
+                        button.disabled = false;
+                    }
+                });
+                resumeList.append(button);
+            }
+        } catch (error) {
+            console.error('Failed to load resumable tasks');
+        }
     }
 
     // Run auth status check and load configuration on initialization

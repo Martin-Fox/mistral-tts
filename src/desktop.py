@@ -25,9 +25,6 @@ else:
     # Development mode: ensure working directory is repository root
     BASE_DIR = Path(__file__).resolve().parent.parent
 
-os.chdir(BASE_DIR)
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +63,10 @@ def run_app(host: str = "127.0.0.1", port: Optional[int] = None, open_browser_ta
     Spawns Uvicorn with the FastAPI application, opens the browser,
     and handles graceful shutdown on interrupt.
     """
+    # Resolve mutable storage only when launching, never when importing helpers.
+    os.chdir(BASE_DIR)
+    if str(BASE_DIR) not in sys.path:
+        sys.path.insert(0, str(BASE_DIR))
     from src.web import app
 
     if port is None:
