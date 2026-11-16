@@ -10,18 +10,17 @@ import math
 from src.core.process_runner import run_process_async, process_budget
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 from mistralai.client import Mistral
 from src.api.base_client import BaseTTSClient
 from src.api.factory import DEFAULT_TTS_MODELS
 from src.api.retry import call_api, validate_retry_settings
-from src.core.config import get_translation_model
+from src.core.config import get_translation_model, load_environment
 from src.core.cache_io import save_text_atomic, save_json_atomic
 from src.core.resource_limits import check_text, ResourceLimits, ResourceLimitExceeded
 from src.core.text_splitter import TextSplitter
 from src.core.storage_retention import check_storage_budget
 
-load_dotenv()
+load_environment()
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ testing. Windows smoke/build verification remains audit P22.
 | File | Role |
 | --- | --- |
 | `requirements.in` | Direct runtime dependencies with explicit versions |
-| `requirements-dev.in` | Runtime inputs plus pytest, AnyIO, Ruff and uv |
+| `requirements-dev.in` | Runtime inputs plus pytest, pytest-timeout, AnyIO, Ruff and uv |
 | `constraints.txt` | Compatibility pins for indirect dependencies |
 | `requirements.txt` | Generated runtime lock: complete pins and artifact hashes |
 | `requirements-dev.txt` | Generated development lock: runtime plus development tools |
@@ -46,7 +46,8 @@ formatting contract and is no longer an application/development requirement.
 AnyIO is explicitly selected in the dev inputs for its
 [bundled pytest plugin](https://anyio.readthedocs.io/en/stable/testing.html);
 separate `pytest-anyio` or `pytest-asyncio` packages are unnecessary for this suite.
-The pinned uv tool is used only to maintain the locks.
+The pinned uv tool is used only to maintain the locks. Dev-only pytest-timeout
+provides the bounded test execution required by P20.
 
 ## Updating dependencies
 
@@ -79,15 +80,16 @@ checking, run `pip check`, import CLI/TUI/WebUI and both client factories using
 dummy keys, run regression tests with fake API responses, and build the Docker
 image. WebUI import creates local storage, so run its import smoke in a throwaway
 working directory with `PYTHONPATH` pointing at the repository. Full test runs
-must use disposable storage/configuration until P20 supplies common fixtures.
+use the shared isolation fixtures described in [Tests and CI](TESTING.md).
 Never validate dependency updates using paid provider requests.
 
 The P19 check installed each lock in separate clean environments and ran the
 selected 450-test regression set in the dev environment. One known dotenv-dependent
 test was deselected, and the three existing Textual pilot/UI tests were not part
 of that selected set. Logic-level TUI, cross-interface, cancellation, cache and
-local FFmpeg tests were included. Shared test isolation and CI are separate P20
-work; this repository currently has no tracked workflow to update.
+local FFmpeg tests were included. P20 subsequently enabled the entire suite,
+including those configuration and pilot tests, under shared isolation fixtures
+and added the Gitea workflow in `.gitea/workflows/ci.yml`.
 
 ## Docker and repeatability limits
 

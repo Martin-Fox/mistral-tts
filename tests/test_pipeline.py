@@ -156,7 +156,7 @@ def test_cancelled_pipeline_keeps_cache_locked_until_compiler_thread_stops(setup
 
 
 def test_core_import_does_not_load_web_terminal_frameworks_or_provider_sdk(tmp_path):
-    environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    environment = dict(os.environ)
     command = ('import sys; import src.core.pipeline; '
                'assert all(name not in sys.modules for name in ("fastapi", "textual", "mistralai", "openai"))')
     result = subprocess.run([sys.executable, '-c', command], cwd=tmp_path, env=environment,

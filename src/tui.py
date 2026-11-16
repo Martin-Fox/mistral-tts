@@ -2,7 +2,6 @@ import asyncio
 import os
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, Input, Button, Label, ProgressBar, Log, Static, Select
@@ -13,7 +12,7 @@ from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
 from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
 from src.core.storage_retention import check_storage_budget
-from src.core.config import get_translation_model, save_translation_model
+from src.core.config import get_translation_model, save_translation_model, load_environment
 
 class BooksmithTUI(App):
     CSS = """
@@ -77,7 +76,7 @@ class BooksmithTUI(App):
     ]
 
     def compose(self) -> ComposeResult:
-        load_dotenv()
+        load_environment()
         api_key = os.getenv("MISTRAL_API_KEY", "")
         openai_key = os.getenv("OPENAI_API_KEY", "")
         current_trans_model = get_translation_model()

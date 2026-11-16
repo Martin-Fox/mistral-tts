@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Optional
 
 import secrets
-from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,13 +34,13 @@ from src.core.storage_retention import StoragePolicy, StorageBudgetExceeded, che
 from src.core.process_runner import process_budget
 from src.api.retry import validate_retry_settings
 from src.core.task_db import TaskDatabase
-from src.core.config import get_translation_model, save_translation_model
+from src.core.config import get_translation_model, save_translation_model, load_environment
 
 # Load environment variables from .env
-load_dotenv()
+load_environment()
 
 # Ensure directories exist on startup
-Path("src/web/static").mkdir(parents=True, exist_ok=True)
+STATIC_DIRECTORY = Path(__file__).resolve().parent / "web" / "static"
 Path("storage/cache").mkdir(parents=True, exist_ok=True)
 Path("storage/output").mkdir(parents=True, exist_ok=True)
 
@@ -123,7 +122,7 @@ async def read_upload_bounded(upload: UploadFile, limit: int) -> bytes:
 
 
 # Mount static files directory
-app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
 
 
 
@@ -486,7 +485,7 @@ async def update_config(
 @app.get("/")
 def read_root():
     """Serves the main frontend page."""
-    return FileResponse("src/web/static/index.html")
+    return FileResponse(STATIC_DIRECTORY / "index.html")
 
 @app.get("/api/audio/{filename}")
 def get_audio(filename: str, session: str = Depends(verify_session)):

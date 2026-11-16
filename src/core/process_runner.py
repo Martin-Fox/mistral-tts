@@ -30,12 +30,15 @@ def process_budget(duration=0, *, probe=False):
 def run_process(cmd, *, timeout, text=False):
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('Process timeout must be finite and positive')
+    # FFmpeg diagnostics contain UTF-8 paths; a Windows ANSI locale must not
+    # turn successful processing into a decoding failure. Preserve binary mode.
+    decoding = {"encoding": "utf-8", "errors": "replace"} if text else {}
     cancellation = process_cancellation.get()
     if cancellation is not None:
         if cancellation.is_set():
             raise RuntimeError('Audio processing cancelled')
         with subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, text=text) as process:
+                              stderr=subprocess.PIPE, text=text, **decoding) as process:
             deadline = time.monotonic() + timeout
             while True:
                 if cancellation.is_set():
@@ -64,7 +67,7 @@ def run_process(cmd, *, timeout, text=False):
             return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
     # subprocess.run kills and waits for its direct child on timeout.
     return subprocess.run(cmd, capture_output=True, check=True, text=text,
-                          stdin=subprocess.DEVNULL, timeout=timeout)
+                          stdin=subprocess.DEVNULL, timeout=timeout, **decoding)
 
 
 async def _stop(process, communication):

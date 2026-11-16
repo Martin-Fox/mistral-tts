@@ -5,6 +5,8 @@ __pycache__/
 .git/
 .env
 .env.*
+**/.env
+**/.env.*
 .venv/
 venv/
 env/

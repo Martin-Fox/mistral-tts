@@ -179,7 +179,9 @@ def test_probe_duration_exact_ffmpeg_null_decoding(tmp_path):
             text=True,
             check=True,
             timeout=120.0,
-            stdin=subprocess.DEVNULL
+            stdin=subprocess.DEVNULL,
+            encoding="utf-8",
+            errors="replace"
         )
         # 1 * 60 + 23.45 = 83.45
         assert duration == pytest.approx(83.45, rel=1e-5)

@@ -2,7 +2,17 @@
 
 This repository contains the containerized version of **Mistral-TTS**, a text-to-speech pipeline designed to convert long-form text (articles, books, essays) into seamless audiobooks. It integrates the **Mistral AI Voxtral TTS** API (with zero-shot voice cloning), **OpenAI TTS** as an alternative engine, configurable **Mistral chat models** (default: `ministral-8b-latest`) for pre-translation, and support for EPUB, MOBI, SRT, and TXT ingestion.
 
-The Docker image bundles Python 3.11, all application dependencies, and **FFmpeg** for high-quality audio compounding.
+The Dockerfile bundles Python 3.11, runtime dependencies, **FFmpeg and ffprobe**.
+Build the current checkout to include its remediations; historical registry tags
+(including `1.0.2`) have not been checked against this branch.
+
+```bash
+docker build -t mistral-tts:audit-local .
+mkdir -p storage
+```
+
+See [Operations](docs/OPERATIONS.md) for TLS, restart recovery, backup/restore and
+upgrade/rollback procedures. All examples below use the locally built image.
 
 ---
 
@@ -15,30 +25,25 @@ To start the responsive, glassmorphism WebUI, expose port `8000` and mount a loc
 
 ```bash
 docker run -d \
-  -p 8000:8000 \
-  -v $(pwd)/storage:/app/storage \
-  -e MISTRAL_API_KEY=your_mistral_api_key_here \
-  -e OPENAI_API_KEY=your_openai_api_key_here \
-  -e MISTRAL_TRANSLATION_MODEL=ministral-8b-latest \
-  -e APP_USERNAME=admin \
-  -e APP_PASSWORD=admin_secure_password \
+  -p 127.0.0.1:8000:8000 \
+  -v "$PWD/storage:/app/storage" \
+  --env-file "$PWD/.env" \
   --name mistral-tts \
-  marcinlis82/mistral-tts:1.0.2
+  mistral-tts:audit-local
 ```
 
 Once running, access the WebUI at **`http://localhost:8000`**.
-*Note: Set a unique `APP_PASSWORD` before first start. Empty credentials and the password `admin` prevent WebUI startup, even on localhost. `APP_USERNAME` defaults to `admin`. If mounted storage contains `auth.json`, its credentials take precedence: update that file locally if it contains rejected credentials, then restart.*
+*Note: Set a unique `APP_PASSWORD` before first start. Empty credentials and the password `admin` prevent WebUI startup, even on localhost. `APP_USERNAME` defaults to `admin`. If mounted storage contains `auth.json`, its credentials take precedence: follow [credential recovery](docs/OPERATIONS.md#credential-recovery) if it contains rejected credentials.*
 
 ### 2. Run the Interactive TUI
 To run the terminal configuration and progress tracking interface inside the container, run with interactive terminal flags (`-it`):
 
 ```bash
 docker run -it --rm \
-  -v $(pwd)/storage:/app/storage \
-  -e MISTRAL_API_KEY=your_mistral_api_key_here \
-  -e OPENAI_API_KEY=your_openai_api_key_here \
-  marcinlis82/mistral-tts:1.0.2 \
-  python src/cli.py --tui
+  -v "$PWD/storage:/app/storage" \
+  --env-file "$PWD/.env" \
+  mistral-tts:audit-local \
+  python -m src.cli --tui
 ```
 
 ### 3. Run via Headless CLI
@@ -46,10 +51,10 @@ For automated script integrations, execute the CLI directly:
 
 ```bash
 docker run --rm \
-  -v $(pwd)/storage:/app/storage \
-  -e MISTRAL_API_KEY=your_mistral_api_key_here \
-  marcinlis82/mistral-tts:1.0.2 \
-  python src/cli.py \
+  -v "$PWD/storage:/app/storage" \
+  --env-file "$PWD/.env" \
+  mistral-tts:audit-local \
+  python -m src.cli \
   --text /app/storage/book.txt \
   --voice /app/storage/sample.mp3 \
   --output /app/storage/audiobook.mp3
@@ -59,7 +64,17 @@ docker run --rm \
 
 ## ⚙️ Environment Variables
 
-The container configuration is managed using the following environment variables:
+Create a private host `.env` as described in README. `--env-file` injects its
+values at container creation; changes require container recreation. It does not
+mount the file, and writing `/app/.env` in WebUI/TUI does not update the host file.
+For model settings that must survive container replacement, set
+`BOOKSMITH_ENV_FILE=/app/storage/application.env` and keep that writable file on
+the storage mount. Omit `MISTRAL_TRANSLATION_MODEL` from injected process variables
+if the saved file should select it after restart: process variables take priority.
+This path is private configuration, not a public upload.
+
+The main environment variables are listed below; the complete limit, retry,
+process-timeout and retention tables are in README.
 
 | Variable | Description |
 | --- | --- |
@@ -73,9 +88,9 @@ The container configuration is managed using the following environment variables
 
 ## 🌟 Key Features
 
-* **Dual Engine Support:** Switch seamlessly between Mistral Voxtral (with instant cloning) and OpenAI TTS (presets: alloy, echo, fable, onyx, nova, shimmer) for global language support.
+* **Dual Engine Support:** Mistral Voxtral reference-audio/preset synthesis and OpenAI TTS presets (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`). Provider access and output quality are not established by offline tests.
 * **Integrated Translation:** Automatic language-to-language translation using configurable Mistral chat models (default: `ministral-8b-latest`) prior to speech synthesis.
-* **Format Ingestion:** Parsers for `.txt`, `.srt` (retains timecodes), `.epub`, and unencrypted `.mobi` ebooks.
+* **Format Ingestion:** Parsers for `.txt`, `.srt` (translation retains timecodes; speech segmentation removes cue numbers and timing), `.epub`, and unencrypted `.mobi` ebooks.
 * **Persistent SQLite States:** Task state, progress, and logs are tracked in a SQLite database (`storage/state.db`) to survive container restarts.
 * **Storage Maintenance:** State-aware retention defaults to dry-run; deletion can be enabled for expired completed jobs and recognized orphaned artifacts. Failed/interrupted jobs remain protected.
 
@@ -345,8 +360,9 @@ filtered audio from fallback audio in the cache. Preset-voice cache identities
 remain unchanged. Previous cloned-voice cache entries are not reused and old
 cloned-voice resume snapshots are rejected as incompatible; resubmit those jobs
 to generate a consistent audiobook with the corrected preprocessing. This can
-incur new API charges. Native Windows process handling still needs its own smoke
-test; the process cleanup tests here were run on Linux.
+incur new API charges. The [portable source smoke](docs/WINDOWS.md) covers
+process handling, but native Windows acceptance remains pending; recorded local
+results are Linux-only.
 
 ### API retries and deadlines
 
@@ -402,7 +418,7 @@ queued, failed and interrupted jobs and their recovery data. To inspect the plan
 inside a running container (replace the container name if needed):
 
 ```bash
-docker exec mistral-tts python3 -m src.core.storage_retention --storage storage
+docker exec --user 1000 mistral-tts python3 -m src.core.storage_retention --storage storage
 ```
 
 Explicit command-line `--apply` recalculates and applies the plan. Alternatively,
@@ -458,6 +474,26 @@ than a Python wrapper dependency. The Mistral SDK stays at `2.4.9`.
 
 See [Dependency management](docs/DEPENDENCIES.md) for installation and the paired
 runtime/dev lock update procedure. The Python package locks do not pin the base
-image digest or apt packages. Native platform checks and broader Docker smoke
-coverage remain separate audit steps; dependency validation does not publish an
-image or expose a server port.
+image digest or apt packages. Native Windows acceptance is still pending; the Linux Docker smoke suite
+below is implemented. Dependency validation does not publish an image or expose
+a server port.
+
+### Runtime smoke checks and startup diagnostics
+
+Run `python scripts/docker_smoke.py` from a checkout with Python and a Linux Docker
+daemon. The same suite is included in Gitea CI. It builds a temporary runtime image
+and checks nonroot startup, bind-mounted storage, real HTTP sessions/uploads,
+FFmpeg output and persistence after restart. TTS responses are replaced with local
+synthetic audio; application containers have no external network or published ports.
+The test image is not pushed. See [Tests and CI](docs/TESTING.md) for fixture handling.
+
+The entrypoint prepares only `/app/storage`, keeps ordinary file modes intact,
+restricts `auth.json` to `0600` and then tests actual writes as the application
+user. Existing `state.db` must also be writable. Inaccessible or read-only storage
+stops startup with `Storage initialization failed` and an ownership/permissions/
+read-only-mount hint. Root startup still drops to UID 1000; explicit nonroot startup
+requires storage that the selected user can prepare and write.
+
+Root and nested `.env`/`.env.*` files are excluded from the build context. Smoke
+tests check synthetic canaries across every saved image layer, not only the final
+filesystem. The production image contains application source without test helpers.

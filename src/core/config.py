@@ -6,13 +6,21 @@ from dotenv import find_dotenv, load_dotenv, set_key
 DEFAULT_TRANSLATION_MODEL = "ministral-8b-latest"
 MODEL_NAME_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.:]+$")
 
+
+def load_environment():
+    """Keep ordinary dotenv discovery; allow an explicit file for isolated runs."""
+    return load_dotenv(dotenv_path=os.getenv('BOOKSMITH_ENV_FILE') or None)
+
 def get_env_path() -> Path:
     """
-    Locates the .env file in the current working directory or parent directories.
+    Uses BOOKSMITH_ENV_FILE when set, otherwise searches cwd and its parents.
 
     Returns:
         Path: Path object pointing to the discovered .env file or Path(".env") as fallback.
     """
+    explicit = os.getenv('BOOKSMITH_ENV_FILE')
+    if explicit:
+        return Path(explicit)
     env_file = find_dotenv(usecwd=True)
     if env_file:
         return Path(env_file)

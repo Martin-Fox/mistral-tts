@@ -25,9 +25,8 @@ COPY --chown=appuser:appuser requirements.txt .
 # Install python packages
 RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.txt && pip check
 
-# Copy application source code and tests
+# Copy runtime source only; smoke helpers are mounted by the external test runner.
 COPY --chown=appuser:appuser src/ ./src/
-COPY --chown=appuser:appuser tests/ ./tests/
 
 # Prepare default storage directories
 RUN mkdir -p storage/cache storage/output storage/translations && chown -R appuser:appuser storage

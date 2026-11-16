@@ -9,21 +9,10 @@ from src.core.auth import hash_password, verify_password
 from src.web import app, db, get_audio, verify_session, run_generation_pipeline
 from src.core.cache_identity import get_cache_key
 
-# Bypass authentication by default in tests
-app.dependency_overrides[verify_session] = lambda: "session-id"
+pytestmark = pytest.mark.usefixtures('authenticated_web')
 
 client = TestClient(app)
 
-
-@pytest.fixture(autouse=True)
-def valid_overridden_session(monkeypatch):
-    from src import web
-    monkeypatch.setattr(web, "login_limiter", web.LoginLimiter())
-    # SSE also checks the session while streaming, after dependency resolution.
-    from src.web import active_sessions
-    active_sessions["session-id"] = time.monotonic() + 3600
-    yield
-    active_sessions.pop("session-id", None)
 
 def test_read_root():
     """Assert that the root route responds with 200 and contains 'Mistral-TTS-Booksmith'."""
