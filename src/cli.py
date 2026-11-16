@@ -4,13 +4,12 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 from rich.panel import Panel
 from rich.logging import RichHandler
 from src.core.text_splitter import TextSplitter
-from src.core.config import get_translation_model
+from src.core.config import get_translation_model, load_environment
 from src.api.mistral_client import MistralTTSClient
 from src.api.factory import get_tts_client
 from src.core.audio_compiler import AudioCompiler
@@ -124,7 +123,7 @@ class BooksmithCLI:
         console.print(Panel(f"[bold green]Success![/bold green] Audiobook saved to: [underline]{output_path}[/underline]"))
 
 async def main() -> int:
-    load_dotenv()
+    load_environment()
     
     parser = argparse.ArgumentParser(description="Mistral-TTS-Booksmith CLI")
     parser.add_argument("--text", type=str, required=False, help="Path to input text file")

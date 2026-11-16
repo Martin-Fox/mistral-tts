@@ -1,5 +1,7 @@
 # Plan refaktoryzacji mistral-tts
 
+> Dokument historyczny: opisuje punkt wyjścia audytu/plan z 2026-11-02. Bieżące procedury wdrożenia, odzyskiwania i migracji są w [OPERATIONS.md](../OPERATIONS.md), a otwarta bramka Windows w [WINDOWS.md](../WINDOWS.md). Nie jest to ponowny audyt po poprawkach.
+
 Punkt odniesienia: [raport audytu](AUDIT_REPORT.md), gałąź main, commit 86c38fe76680eed9ff158b2b19b1f86dbdfcfc6a. To plan, nie wdrożone poprawki.
 
 ## Zasady realizacji

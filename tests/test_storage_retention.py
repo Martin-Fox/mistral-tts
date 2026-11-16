@@ -2,7 +2,6 @@ import asyncio
 from dataclasses import replace
 import hashlib
 import os
-from pathlib import Path
 import json
 import subprocess
 import sys
@@ -257,7 +256,7 @@ def test_crashed_compiler_owner_releases_lease_for_cleanup(store, tmp_path):
                '    assert acquired\n'
                '    Path(sys.argv[2]).write_text("ready")\n'
                '    time.sleep(30)\n')
-    environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    environment = dict(os.environ)
     process = subprocess.Popen([sys.executable, '-c', command, str(workspace), str(ready)], env=environment)
     try:
         deadline = time.monotonic() + 5
@@ -316,8 +315,8 @@ def test_database_symlink_cannot_modify_external_metadata(store, tmp_path):
 def test_maintenance_command_defaults_to_dry_run_and_requires_apply(store):
     root, database = store
     task_id, cache = job(store, 'Completed')
-    environment = {'PYTHONPATH': str(Path(__file__).resolve().parents[1]), 'PYTHONIOENCODING': 'utf-8',
-                   'STORAGE_CLEANUP_ENABLED': 'true'}
+    environment = {'PYTHONPATH': os.environ['PYTHONPATH'], 'PYTHONIOENCODING': 'utf-8',
+                   'BOOKSMITH_ENV_FILE': str(root.parent / '.env'), 'STORAGE_CLEANUP_ENABLED': 'true'}
     for name in ('PATH', 'SYSTEMROOT', 'WINDIR'):
         if name in os.environ:
             environment[name] = os.environ[name]

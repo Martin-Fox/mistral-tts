@@ -62,6 +62,8 @@ def invoke_cli(tmp_path):
         # No inherited API credentials, dotenv files or application storage.
         environment = {name: os.environ[name] for name in ('PATH', 'SYSTEMROOT', 'WINDIR') if name in os.environ}
         environment.update(PYTHONPATH=str(REPOSITORY), PYTHONIOENCODING='utf-8', CLI_TEST_FAILURE=failure)
+        environment['PYTHONPATH'] = os.environ.get('PYTHONPATH', str(REPOSITORY))
+        environment['BOOKSMITH_ENV_FILE'] = str(tmp_path / '.env')
         environment.update(settings or {})
         result = subprocess.run([sys.executable, str(runner), *arguments], cwd=tmp_path,
                                 env=environment, capture_output=True, text=True, encoding='utf-8', timeout=20)

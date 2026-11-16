@@ -254,8 +254,8 @@ def sweep_storage(root, database, *, policy=None, dry_run=True, now=None):
 
 
 def main():
-    from dotenv import load_dotenv
-    load_dotenv()
+    from src.core.config import load_environment
+    load_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--storage', type=Path, default=Path('storage'))
     parser.add_argument('--apply', action='store_true', help='Delete eligible artifacts; default is read-only dry-run')
