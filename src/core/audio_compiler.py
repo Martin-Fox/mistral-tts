@@ -1,10 +1,12 @@
-import os
+import tempfile
 import re
-import subprocess
+import math
+from src.core.process_runner import run_process, process_budget
+from src.core.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
+from src.core.cache_io import try_directory_lock
+from src.core.storage_retention import check_storage_budget
 from pathlib import Path
 from typing import List, Optional
-
-from src.core.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
 
 class AudioCompiler:
     """
@@ -20,6 +22,8 @@ class AudioCompiler:
             pause_duration_s (float): Duration of silence to inject between chunks in seconds.
             trailing_silence_s (float): Duration of silence padding at the very end to prevent EOF truncation.
         """
+        process_budget()  # Validate timeout configuration before generating audio.
+        process_budget(probe=True)
         self.pause_duration_s = pause_duration_s
         self.trailing_silence_s = trailing_silence_s
 
@@ -45,7 +49,9 @@ class AudioCompiler:
             "-f", "null", "-"
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30.0)
+            duration_hint = self._container_duration(file_path)
+            timeout = process_budget(duration_hint, probe=True) if duration_hint is not None else process_budget()
+            result = run_process(cmd, text=True, timeout=timeout)
             matches = re.findall(r"time=(\d+):(\d+):(\d+\.\d+)", result.stderr)
             if not matches:
                 raise ValueError(f"Could not parse duration from FFmpeg output for {file_path}")
@@ -53,6 +59,18 @@ class AudioCompiler:
             return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
         except Exception as e:
             raise RuntimeError(f"Failed to probe duration for {file_path}: {e}") from e
+
+    def _container_duration(self, file_path):
+        # Metadata is only a timeout hint; decoded audio remains the validation source.
+        try:
+            result = run_process([
+                get_ffprobe_path(), "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(file_path)
+            ], text=True, timeout=process_budget(probe=True))
+            duration = float(result.stdout.strip())
+            return duration if math.isfinite(duration) and duration > 0 else None
+        except Exception:
+            return None
 
     def _probe_audio_properties(self, file_path: Path) -> tuple[int, int]:
         """
@@ -68,11 +86,11 @@ class AudioCompiler:
         import json
         try:
             cmd = [
-                get_ffprobe_path(), "-v", "error", 
+                get_ffprobe_path(), "-v", "error",
                 "-show_entries", "stream=sample_rate,channels", 
                 "-of", "json", str(file_path)
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = run_process(cmd, text=True, timeout=process_budget(probe=True))
             data = json.loads(result.stdout)
             if "streams" in data and len(data["streams"]) > 0:
                 stream = data["streams"][0]
@@ -97,11 +115,20 @@ class AudioCompiler:
             duration_s = self.pause_duration_s
         channel_layout = "mono" if channels == 1 else "stereo"
         cmd = [
-            get_ffmpeg_path(), "-y", "-f", "lavfi", 
+            get_ffmpeg_path(), "-y", "-f", "lavfi",
             "-i", f"anullsrc=r={sample_rate}:cl={channel_layout}",
             "-t", str(duration_s), "-q:a", "9", str(output_path)
         ]
-        subprocess.run(cmd, check=True, capture_output=True)
+        run_process(cmd, timeout=process_budget(duration_s))
+
+    @staticmethod
+    def _concat_entry(path: Path) -> str:
+        # FFmpeg concat uses its own quoting rules, not shell argument quoting.
+        absolute = path.resolve().as_posix()
+        if any(char in absolute for char in ("\n", "\r", "\x00")):
+            raise ValueError("Concat paths cannot contain line breaks or NUL")
+        escaped = absolute.replace("'", "'\\''")
+        return f"file '{escaped}'\n"
 
     def compile(self, chunk_paths: List[Path], output_path: Path) -> dict:
         """
@@ -145,42 +172,46 @@ class AudioCompiler:
         expected_duration = total_chunks_duration + total_pauses_duration + self.trailing_silence_s
 
         # Ensure output directory exists before generating silence files or concat list
+        check_storage_budget()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create temporary files for concat demuxer and silence
-        unique_suffix = f"{os.getpid()}_{id(chunk_paths)}"
-        concat_file = output_path.parent / f"concat_{output_path.stem}_{unique_suffix}.txt"
-        silence_file = output_path.parent / f"silence_{unique_suffix}.mp3"
-        trailing_silence_file = output_path.parent / f"trailing_silence_{unique_suffix}.mp3"
+        # Staging stays on the destination filesystem so replace is atomic.
+        # A private directory also isolates concurrent compilers and all cleanup.
+        with tempfile.TemporaryDirectory(prefix=".compile-", dir=output_path.parent) as directory, \
+                try_directory_lock(Path(directory)) as leased:
+            if not leased:
+                raise RuntimeError("Compiler workspace is unexpectedly locked")
+            work_dir = Path(directory)
+            concat_file = work_dir / "concat.txt"
+            silence_file = work_dir / "silence.mp3"
+            trailing_silence_file = work_dir / "trailing_silence.mp3"
+            staged_output = work_dir / f"result{output_path.suffix}"
 
-        # Probe the first chunk to match its audio properties for silence generation
-        sample_rate, channels = self._probe_audio_properties(chunk_paths[0])
+            sample_rate, channels = self._probe_audio_properties(chunk_paths[0])
+            if self.pause_duration_s > 0:
+                self._generate_silence(silence_file, duration_s=self.pause_duration_s, sample_rate=sample_rate, channels=channels)
+            if self.trailing_silence_s > 0:
+                self._generate_silence(trailing_silence_file, duration_s=self.trailing_silence_s, sample_rate=sample_rate, channels=channels)
 
-        if self.pause_duration_s > 0:
-            self._generate_silence(silence_file, duration_s=self.pause_duration_s, sample_rate=sample_rate, channels=channels)
-        if self.trailing_silence_s > 0:
-            self._generate_silence(trailing_silence_file, duration_s=self.trailing_silence_s, sample_rate=sample_rate, channels=channels)
-
-        try:
-            with open(concat_file, "w") as f:
+            with open(concat_file, "w", encoding="utf-8", newline="\n") as stream:
                 for i, chunk_path in enumerate(chunk_paths):
-                    f.write(f"file '{chunk_path.absolute()}'\n")
+                    stream.write(self._concat_entry(chunk_path))
                     if i < len(chunk_paths) - 1 and self.pause_duration_s > 0:
-                        f.write(f"file '{silence_file.absolute()}'\n")
+                        stream.write(self._concat_entry(silence_file))
                 if self.trailing_silence_s > 0:
-                    f.write(f"file '{trailing_silence_file.absolute()}'\n")
+                    stream.write(self._concat_entry(trailing_silence_file))
 
             cmd = [
                 get_ffmpeg_path(), "-y", "-f", "concat", "-safe", "0",
-                "-i", str(concat_file), "-af", "loudnorm", str(output_path)
+                "-i", str(concat_file), "-af", "loudnorm", str(staged_output)
             ]
-            subprocess.run(cmd, check=True, capture_output=True)
+            run_process(cmd, timeout=process_budget(expected_duration))
 
-            if not output_path.exists() or output_path.stat().st_size == 0:
+            if not staged_output.exists() or staged_output.stat().st_size == 0:
                 raise RuntimeError(f"FFmpeg compilation failed to create output file: {output_path}")
 
             # Probe compiled output file duration with ffprobe
-            output_duration = self._probe_duration(output_path)
+            output_duration = self._probe_duration(staged_output)
 
             # Verification: output duration must match expected duration within a safe tolerance (e.g. 3-4 seconds)
             tolerance = 4.0
@@ -192,6 +223,8 @@ class AudioCompiler:
                     f"Audio was truncated by {expected_duration - output_duration:.2f}s!"
                 )
 
+            staged_output.replace(output_path)
+
             return {
                 "expected_duration": expected_duration,
                 "output_duration": output_duration,
@@ -199,20 +232,3 @@ class AudioCompiler:
                 "total_chunks_duration": total_chunks_duration,
                 "output_path": output_path
             }
-
-        finally:
-            if concat_file.exists():
-                try:
-                    concat_file.unlink()
-                except Exception:
-                    pass
-            if silence_file.exists():
-                try:
-                    silence_file.unlink()
-                except Exception:
-                    pass
-            if trailing_silence_file.exists():
-                try:
-                    trailing_silence_file.unlink()
-                except Exception:
-                    pass

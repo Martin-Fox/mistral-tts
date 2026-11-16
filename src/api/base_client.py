@@ -6,8 +6,14 @@ class BaseTTSClient(ABC):
     """
     Abstract base class for Text-to-Speech clients.
     """
+    model: str
     def __init__(self, api_key: str):
         self.api_key = api_key
+
+    @abstractmethod
+    def set_voice_id(self, voice_id: str) -> None:
+        """Select a preset/manual voice and clear any previous reference sample."""
+        pass
 
     @abstractmethod
     async def generate_audio(

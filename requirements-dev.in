@@ -1,0 +1,10 @@
+# Development environment includes the entire runtime dependency graph.
+-r requirements.in
+
+# AnyIO supplies the pytest plugin used by @pytest.mark.anyio (no extra plugin package).
+anyio==4.13.0
+pytest==9.0.3
+pytest-timeout==2.4.0
+ruff==0.15.16
+# Lock generator, isolated from runtime; use the same version when refreshing pins/hashes.
+uv==0.11.7

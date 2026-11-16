@@ -54,7 +54,8 @@ async def test_openai_generate_audio_retry_success(mock_sleep, mock_post, tmp_pa
     assert out_path.exists()
     assert out_path.read_bytes() == b"retry-audio-bytes" * 10
     assert mock_post.call_count == 2
-    mock_sleep.assert_called_once_with(1)  # 2^0 = 1 second backoff for first retry
+    mock_sleep.assert_called_once()
+    assert 1 <= mock_sleep.call_args.args[0] <= 1.25
 
 @pytest.mark.anyio
 @patch("httpx.AsyncClient.post")

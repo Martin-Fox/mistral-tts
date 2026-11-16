@@ -5,12 +5,14 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from src.web import app, db, get_audio, verify_session, get_cache_key, run_generation_pipeline
+from src.core.auth import hash_password, verify_password
+from src.web import app, db, get_audio, verify_session, run_generation_pipeline
+from src.core.cache_identity import get_cache_key
 
-# Bypass authentication by default in tests
-app.dependency_overrides[verify_session] = lambda: "session-id"
+pytestmark = pytest.mark.usefixtures('authenticated_web')
 
 client = TestClient(app)
+
 
 def test_read_root():
     """Assert that the root route responds with 200 and contains 'Mistral-TTS-Booksmith'."""
@@ -143,7 +145,7 @@ def test_generate_missing_text():
     assert response.status_code == 400
     assert "Either text_file or text_content must be provided." in response.json()["detail"]
 
-@patch("os.getenv", return_value=None)
+@patch("os.getenv", side_effect=lambda key, default=None: default)
 def test_generate_missing_api_key(mock_getenv):
     """Assert that omitting or providing an empty API key returns a client error status code 400 when not in env."""
     data = {
@@ -171,7 +173,7 @@ def test_authentication_status_unauthenticated():
 def test_login_success():
     """Assert that a login request with correct credentials returns 200 and sets the session cookie."""
     with patch("src.web.APP_USERNAME", "admin"), \
-         patch("src.web.APP_PASSWORD", "admin"):
+         patch("src.web.APP_PASSWORD_HASH", hash_password("admin")):
         app.dependency_overrides.clear()
         try:
             payload = {"username": "admin", "password": "admin"}
@@ -187,7 +189,7 @@ def test_login_success():
 def test_login_failure():
     """Assert that a login request with incorrect credentials returns 401."""
     with patch("src.web.APP_USERNAME", "admin"), \
-         patch("src.web.APP_PASSWORD", "admin"):
+         patch("src.web.APP_PASSWORD_HASH", hash_password("admin")):
         app.dependency_overrides.clear()
         try:
             payload = {"username": "admin", "password": "wrong_password"}
@@ -201,7 +203,7 @@ def test_login_failure():
 def test_logout_success():
     """Assert that a logout request clears the session and cookie."""
     with patch("src.web.APP_USERNAME", "admin"), \
-         patch("src.web.APP_PASSWORD", "admin"):
+         patch("src.web.APP_PASSWORD_HASH", hash_password("admin")):
         app.dependency_overrides.clear()
         try:
             # First login to establish session
@@ -247,7 +249,7 @@ def test_change_password_success(tmp_path):
     temp_auth_file = tmp_path / "auth.json"
     
     with patch("src.web.AUTH_FILE", temp_auth_file), \
-         patch("src.web.APP_PASSWORD", "admin"):
+         patch("src.web.APP_PASSWORD_HASH", hash_password("admin")):
         
         app.dependency_overrides.clear()
         try:
@@ -268,7 +270,8 @@ def test_change_password_success(tmp_path):
             assert temp_auth_file.exists()
             with open(temp_auth_file, "r") as f:
                 saved_data = json.load(f)
-                assert saved_data["password"] == "new_secure_password"
+                assert "password" not in saved_data
+                assert verify_password("new_secure_password", saved_data["password_hash"])
         finally:
             app.dependency_overrides[verify_session] = lambda: "session-id"
 
@@ -278,7 +281,7 @@ def test_change_password_wrong_current(tmp_path):
     temp_auth_file = tmp_path / "auth.json"
     
     with patch("src.web.AUTH_FILE", temp_auth_file), \
-         patch("src.web.APP_PASSWORD", "admin"):
+         patch("src.web.APP_PASSWORD_HASH", hash_password("admin")):
         
         app.dependency_overrides.clear()
         try:
@@ -298,7 +301,7 @@ def test_change_password_wrong_current(tmp_path):
 
 def test_change_password_too_short():
     """Assert that a new password shorter than 4 characters is rejected with 400."""
-    with patch("src.web.APP_PASSWORD", "admin"):
+    with patch("src.web.APP_PASSWORD_HASH", hash_password("admin")):
         app.dependency_overrides.clear()
         try:
             # Login first
@@ -332,7 +335,7 @@ def test_generate_openai_voice_cloning_error():
     assert "does not support voice cloning" in response.json()["detail"]
 
 
-@patch("os.getenv", return_value=None)
+@patch("os.getenv", side_effect=lambda key, default=None: default)
 def test_generate_openai_missing_key_error(mock_getenv):
     """Assert that omitting or providing an empty OpenAI API key returns status code 400 when not in env."""
     data = {
@@ -348,7 +351,10 @@ def test_generate_openai_missing_key_error(mock_getenv):
 
 
 @pytest.mark.anyio
-async def test_background_purger():
+async def test_background_purger(tmp_path):
+    # Never purge the application's persistent database from a regression test.
+    from src.core.task_db import TaskDatabase
+    db = TaskDatabase(tmp_path / "state.db")
     # 1. Create a task
     task_id = "old-task-999"
     db.create_task(task_id)
@@ -358,7 +364,7 @@ async def test_background_purger():
     conn = db._get_connection()
     try:
         with conn:
-            conn.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (time.time() - 90000, task_id))
+            conn.execute("UPDATE tasks SET status='Failed', finished_at = ? WHERE id = ?", (time.time() - 90000, task_id))
     finally:
         conn.close()
         
@@ -393,7 +399,7 @@ def test_config_endpoints_with_session_cookie():
     from src.web import active_sessions
     app.dependency_overrides.clear()
     valid_sid = "test-session-config-123"
-    active_sessions.add(valid_sid)
+    active_sessions[valid_sid] = time.monotonic() + 3600
     session_client = TestClient(app)
     session_client.cookies.set("session_id", valid_sid)
     try:
@@ -411,7 +417,7 @@ def test_config_endpoints_with_session_cookie():
             assert post_res.json()["translation_model"] == "mistral-large-latest"
             mock_save.assert_called_once_with("mistral-large-latest")
     finally:
-        active_sessions.discard(valid_sid)
+        active_sessions.pop(valid_sid, None)
         app.dependency_overrides[verify_session] = lambda: "session-id"
 
 
@@ -486,7 +492,8 @@ def test_post_config_validation_failures(invalid_payload):
     assert "translation_model is required and must be a non-empty string" in response.json()["detail"]
 
 
-def test_get_cache_key_includes_translation_model():
+def test_get_cache_key_includes_translation_model(monkeypatch):
+    monkeypatch.setattr("src.core.cache_identity.get_translation_model", lambda: "configured-model")
     """Assert that differing translation_model values result in unique cache keys."""
     key1 = get_cache_key("text", "preset", None, None, "English", "Spanish", translation_model="ministral-8b-latest")
     key2 = get_cache_key("text", "preset", None, None, "English", "Spanish", translation_model="mistral-large-latest")
@@ -557,9 +564,7 @@ async def test_run_generation_pipeline_translation_model(tmp_path):
     with patch("src.web.MistralTTSClient") as mock_client_cls, \
          patch("src.web.get_tts_client") as mock_get_tts, \
          patch("src.web.AudioCompiler"), \
-         patch("src.core.epub_parser.read_input_text", return_value="Hello world"), \
-         patch("src.web.save_manifest"), \
-         patch("src.web.load_manifest", return_value={"chunks": [], "completed": []}), \
+         patch("src.core.pipeline.read_input_text", return_value="Hello world"), \
          patch("src.web.TextSplitter") as mock_splitter:
 
         mock_client = MagicMock()
@@ -567,9 +572,11 @@ async def test_run_generation_pipeline_translation_model(tmp_path):
         mock_client_cls.return_value = mock_client
 
         mock_tts = MagicMock()
+        mock_tts.model = "voxtral-mini-tts-2603"
         mock_tts.generate_audio = AsyncMock()
         mock_get_tts.return_value = mock_tts
 
+        mock_splitter.return_value.max_chars = 1000
         mock_splitter.return_value.split.return_value = ["Hola mundo"]
 
         try:
@@ -613,12 +620,11 @@ async def test_run_generation_pipeline_with_text_file_data():
 
     with patch("src.web.get_tts_client") as mock_get_tts, \
          patch("src.web.AudioCompiler") as mock_compiler_cls, \
-         patch("src.core.epub_parser.read_input_text", return_value=chunk_text), \
-         patch("src.web.save_manifest"), \
-         patch("src.web.load_manifest", return_value={"chunks": [], "completed": []}), \
+         patch("src.core.pipeline.read_input_text", return_value=chunk_text), \
          patch("src.web.TextSplitter") as mock_splitter:
 
         mock_tts = MagicMock()
+        mock_tts.model = "voxtral-mini-tts-2603"
         mock_tts.generate_audio = AsyncMock(side_effect=fake_generate_audio)
         mock_get_tts.return_value = mock_tts
 
@@ -631,6 +637,7 @@ async def test_run_generation_pipeline_with_text_file_data():
         }
         mock_compiler_cls.return_value = mock_compiler
 
+        mock_splitter.return_value.max_chars = 1000
         mock_splitter.return_value.split.return_value = [chunk_text]
 
         try:

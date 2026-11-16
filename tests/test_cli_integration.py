@@ -54,6 +54,7 @@ async def test_cli_pre_compilation_invalid_chunk_raises_runtime_error(tmp_path):
 
     with patch("src.cli.get_tts_client") as mock_get_client:
         mock_client = AsyncMock()
+        mock_client.model = "voxtral-mini-tts-2603"
         mock_client.set_voice_id = MagicMock()
         # Mock generate_audio to create a file smaller than 100 bytes
         async def fake_generate(text, path):
@@ -61,7 +62,7 @@ async def test_cli_pre_compilation_invalid_chunk_raises_runtime_error(tmp_path):
         mock_client.generate_audio = AsyncMock(side_effect=fake_generate)
         mock_get_client.return_value = mock_client
 
-        with pytest.raises(RuntimeError, match="Missing or invalid chunk audio file before compilation"):
+        with pytest.raises(RuntimeError, match="Generated chunk audio missing or invalid"):
             await cli.run(
                 text_path=text_path,
                 voice_path=Path(""),
@@ -73,7 +74,7 @@ async def test_cli_pre_compilation_invalid_chunk_raises_runtime_error(tmp_path):
 @pytest.mark.anyio
 async def test_cli_cache_isolation_and_chunk_mismatch_check(tmp_path):
     import json
-    import hashlib
+    from src.core.cache_identity import get_cache_key
     from unittest.mock import AsyncMock, MagicMock, patch
 
     text_path = tmp_path / "text.txt"
@@ -91,6 +92,7 @@ async def test_cli_cache_isolation_and_chunk_mismatch_check(tmp_path):
     with patch("src.cli.get_tts_client") as mock_get_client, \
          patch.object(cli.compiler, "compile") as mock_compile:
         mock_client = AsyncMock()
+        mock_client.model = "voxtral-mini-tts-2603"
         mock_client.set_voice_id = MagicMock()
         mock_client.generate_audio = AsyncMock(side_effect=fake_generate)
         mock_get_client.return_value = mock_client
@@ -104,8 +106,7 @@ async def test_cli_cache_isolation_and_chunk_mismatch_check(tmp_path):
             engine="mistral"
         )
 
-        expected_raw = f"Unique sentence for caching.{str(voice_path).strip()}"
-        expected_hash = hashlib.sha256(expected_raw.encode("utf-8")).hexdigest()
+        expected_hash = get_cache_key("Unique sentence for caching.", None, None, None, None, None)
         assert cli.cache_dir.name == expected_hash
         assert cli.manifest_path.exists()
         manifest_data = json.loads(cli.manifest_path.read_text())
@@ -172,6 +173,7 @@ async def test_cli_cache_isolation_between_different_books(tmp_path):
     with patch("src.cli.get_tts_client") as mock_get_client, \
          patch.object(cli_a.compiler, "compile") as mock_compile:
         mock_client = AsyncMock()
+        mock_client.model = "voxtral-mini-tts-2603"
         mock_client.set_voice_id = MagicMock()
         mock_client.generate_audio = AsyncMock(side_effect=fake_generate_audio)
         mock_get_client.return_value = mock_client
@@ -199,6 +201,7 @@ async def test_cli_cache_isolation_between_different_books(tmp_path):
     with patch("src.cli.get_tts_client") as mock_get_client, \
          patch.object(cli_b.compiler, "compile") as mock_compile:
         mock_client = AsyncMock()
+        mock_client.model = "voxtral-mini-tts-2603"
         mock_client.set_voice_id = MagicMock()
         mock_client.generate_audio = AsyncMock(side_effect=fake_generate_audio)
         mock_get_client.return_value = mock_client
@@ -239,6 +242,7 @@ async def test_cli_cache_isolation_between_different_books(tmp_path):
     with patch("src.cli.get_tts_client") as mock_get_client, \
          patch.object(cli_a2.compiler, "compile") as mock_compile:
         mock_client = AsyncMock()
+        mock_client.model = "voxtral-mini-tts-2603"
         mock_client.set_voice_id = MagicMock()
         mock_client.generate_audio = AsyncMock(side_effect=fake_generate_audio)
         mock_get_client.return_value = mock_client
@@ -260,6 +264,7 @@ async def test_cli_cache_isolation_between_different_books(tmp_path):
     with patch("src.cli.get_tts_client") as mock_get_client, \
          patch.object(cli_a_voice2.compiler, "compile") as mock_compile:
         mock_client = AsyncMock()
+        mock_client.model = "voxtral-mini-tts-2603"
         mock_client.set_voice_id = MagicMock()
         mock_client.generate_audio = AsyncMock(side_effect=fake_generate_audio)
         mock_get_client.return_value = mock_client
@@ -298,6 +303,7 @@ async def test_cli_sequential_runs_same_instance_no_cache_nesting(tmp_path):
     with patch("src.cli.get_tts_client") as mock_get_client, \
          patch.object(cli.compiler, "compile") as mock_compile:
         mock_client = AsyncMock()
+        mock_client.model = "voxtral-mini-tts-2603"
         mock_client.set_voice_id = MagicMock()
         mock_client.generate_audio = AsyncMock(side_effect=fake_gen)
         mock_get_client.return_value = mock_client

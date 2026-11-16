@@ -36,6 +36,8 @@ def test_database_lifecycle(tmp_path):
     assert task["percentage"] == 50
     assert task["status"] == "Generating Audio"
     
+    db.update_task(task_id, status="Completed", completed=True)
+
     # 5. Delete old tasks
     purged = db.delete_old_tasks(time.time() + 10)
     assert purged == 1

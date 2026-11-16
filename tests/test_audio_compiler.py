@@ -60,7 +60,7 @@ def test_compile_truncation_detection_raises_runtime_error(tmp_path):
     # Simulate output file duration being truncated to 1.0s instead of ~5.5s
     orig_probe = compiler._probe_duration
     def mock_probe(p):
-        if p == output:
+        if p not in (c1, c2):
             return 1.0
         return orig_probe(p)
 
@@ -86,7 +86,7 @@ def test_compile_tolerance_boundary_pass_and_fail(tmp_path):
 
     # 1. Output duration above threshold (threshold + 0.5s) -> should PASS
     def mock_probe_pass(p):
-        if p == output:
+        if p not in (c1, c2):
             return cutoff_threshold + 0.5
         return orig_probe(p)
 
@@ -97,7 +97,7 @@ def test_compile_tolerance_boundary_pass_and_fail(tmp_path):
 
     # 2. Output duration below threshold (threshold - 0.5s) -> should FAIL with RuntimeError
     def mock_probe_fail(p):
-        if p == output:
+        if p not in (c1, c2):
             return cutoff_threshold - 0.5
         return orig_probe(p)
 
@@ -173,12 +173,15 @@ def test_probe_duration_exact_ffmpeg_null_decoding(tmp_path):
         )
         duration = compiler._probe_duration(dummy_file)
 
-        mock_sub.assert_called_once_with(
+        mock_sub.assert_called_with(
             ["ffmpeg", "-nostats", "-v", "info", "-i", str(dummy_file), "-f", "null", "-"],
             capture_output=True,
             text=True,
             check=True,
-            timeout=30.0
+            timeout=120.0,
+            stdin=subprocess.DEVNULL,
+            encoding="utf-8",
+            errors="replace"
         )
         # 1 * 60 + 23.45 = 83.45
         assert duration == pytest.approx(83.45, rel=1e-5)

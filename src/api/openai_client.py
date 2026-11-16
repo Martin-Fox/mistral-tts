@@ -1,9 +1,10 @@
 import httpx
 import logging
-import asyncio
+from src.api.retry import call_api, APIResponseError, validate_retry_settings
 from pathlib import Path
 from typing import Union, List, Dict, Any
 from src.api.base_client import BaseTTSClient
+from src.api.factory import DEFAULT_TTS_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +14,9 @@ class OpenAITTSClient(BaseTTSClient):
     """
     def __init__(self, api_key: str):
         super().__init__(api_key)
+        validate_retry_settings()
         self.api_url = "https://api.openai.com/v1/audio/speech"
-        self.model = "tts-1"
+        self.model = DEFAULT_TTS_MODELS["openai"]
         self.voice_id = "alloy"  # Default voice
 
     def set_voice_id(self, voice_id: str) -> None:
@@ -44,32 +46,19 @@ class OpenAITTSClient(BaseTTSClient):
             "response_format": "mp3"
         }
 
-        for attempt in range(retry_count):
-            try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.post(self.api_url, headers=headers, json=payload)
-                    
-                    if response.status_code == 200:
-                        output_path.write_bytes(response.content)
-                        if not output_path.exists() or output_path.stat().st_size <= 100:
-                            raise RuntimeError(
-                                f"Generated OpenAI audio file is missing or too small (<= 100 bytes): {output_path}"
-                            )
-                        logger.info(f"Successfully generated OpenAI TTS audio for: {output_path}")
-                        return
-                    else:
-                        error_detail = response.text
-                        logger.warning(
-                            f"OpenAI API returned status {response.status_code} on attempt {attempt + 1}: {error_detail}"
-                        )
-                        raise ValueError(f"OpenAI TTS API Error: Status {response.status_code} - {error_detail}")
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed for OpenAI TTS chunk {output_path}: {e}")
-                if attempt < retry_count - 1:
-                    await asyncio.sleep(2 ** attempt)
-                else:
-                    logger.error(f"Failed to generate OpenAI audio after {retry_count} attempts.")
-                    raise
+        async def request():
+            timeout, _, _ = validate_retry_settings()
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(self.api_url, headers=headers, json=payload)
+                if response.status_code != 200:
+                    raise APIResponseError(response.status_code, response.headers, 'OpenAI TTS')
+                return response
+
+        response = await call_api(request, attempts=retry_count)
+        output_path.write_bytes(response.content)
+        if not output_path.exists() or output_path.stat().st_size <= 100:
+            raise RuntimeError(f"Generated OpenAI audio file is missing or too small (<= 100 bytes): {output_path}")
+        logger.info(f"Successfully generated OpenAI TTS audio for: {output_path}")
 
     async def list_voices(self, retry_count: int = 3) -> List[Dict[str, Any]]:
         """

@@ -158,7 +158,7 @@ def test_audio_compiler_invokes_resolved_binaries(tmp_path):
     with patch("src.core.audio_compiler.get_ffmpeg_path", return_value="/custom/bin/ffmpeg") as mock_ffmpeg, \
          patch("src.core.audio_compiler.get_ffprobe_path", return_value="/custom/bin/ffprobe") as mock_ffprobe, \
          patch("subprocess.run") as mock_sub:
-        
+
         # Test duration probing uses custom ffmpeg
         mock_sub.return_value.stderr = "time=00:00:01.00"
         compiler._probe_duration(dummy_file)
@@ -186,3 +186,84 @@ def test_web_get_static_dir_fallback(monkeypatch, tmp_path):
         assert static_dir == Path("src/web/static")
 
 
+
+def test_importing_desktop_helpers_does_not_change_working_directory(tmp_path):
+    """Desktop helpers must preserve the collection/subprocess storage sandbox."""
+    import os
+    import subprocess
+
+    result = subprocess.run([
+        sys.executable, '-c',
+        'from pathlib import Path; import sys; original = Path.cwd(); '
+        'import src.desktop; assert Path.cwd() == original; '
+        'assert "src.web" not in sys.modules; assert not Path("storage").exists()',
+    ], cwd=tmp_path, env=dict(os.environ), capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mistral_preprocessing_and_probe_use_resolved_binaries(tmp_path, monkeypatch):
+    """Bundled binaries still pass through the bounded asynchronous runner."""
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+    from src.api.mistral_client import MistralTTSClient
+
+    reference = tmp_path / 'voice.wav'
+    reference.write_bytes(b'synthetic reference')
+    async def process(command, *, timeout):
+        from pathlib import Path
+        assert timeout > 0
+        if command[0] == '/bundled/ffmpeg':
+            Path(command[-1]).write_bytes(b'processed reference')
+            return Mock(stdout=b'', stderr=b'')
+        assert command[0] == '/bundled/ffprobe'
+        return Mock(stdout=b'1.5\n', stderr=b'')
+
+    runner = AsyncMock(side_effect=process)
+    monkeypatch.setattr('src.api.mistral_client.get_ffmpeg_path', lambda: '/bundled/ffmpeg')
+    monkeypatch.setattr('src.api.mistral_client.get_ffprobe_path', lambda: '/bundled/ffprobe')
+    monkeypatch.setattr('src.api.mistral_client.run_process_async', runner)
+    client = MistralTTSClient('synthetic-key')
+    client.client = Mock(audio=Mock(speech=Mock(complete_async=AsyncMock(
+        return_value=Mock(audio_data=None, audio=b'a' * 200)))))
+    async def run():
+        await client.clone_voice(reference)
+        assert client.voice_sample_bytes == b'processed reference'
+        await client.generate_audio('source text', tmp_path / 'chunk.mp3', retry_count=1)
+    asyncio.run(run())
+    assert reference.read_bytes() == b'synthetic reference'
+    assert [call.args[0][0] for call in runner.call_args_list] == ['/bundled/ffmpeg', '/bundled/ffprobe']
+
+def test_web_serves_bundled_assets_outside_source_directory(tmp_path):
+    """A fresh WebUI import binds both routes to PyInstaller's asset directory."""
+    import os
+    import shutil
+    import subprocess
+    from src import web
+
+    bundle = tmp_path / "Reader's książki bundle"
+    assets = bundle / 'src/web/static'
+    shutil.copytree(web.STATIC_DIRECTORY, assets)
+    original = {path.name: path.read_bytes() for path in assets.iterdir() if path.is_file()}
+    working = tmp_path / 'working'
+    working.mkdir()
+    command = '''
+import asyncio
+from pathlib import Path
+import sys
+import httpx
+sys._MEIPASS = sys.argv[1]
+from src import web
+assert web.STATIC_DIRECTORY == Path(sys.argv[1]) / 'src/web/static'
+async def run():
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app), base_url='http://test') as client:
+        for url, name in (('/', 'index.html'), ('/static/app.js', 'app.js')):
+            result = await client.get(url)
+            assert result.status_code == 200
+            assert result.content == (web.STATIC_DIRECTORY / name).read_bytes()
+asyncio.run(run())
+assert not Path('src').exists()
+'''
+    result = subprocess.run([sys.executable, '-c', command, str(bundle)], cwd=working,
+                            env=dict(os.environ), capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {path.name: path.read_bytes() for path in assets.iterdir() if path.is_file()} == original

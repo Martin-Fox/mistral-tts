@@ -42,8 +42,9 @@ async def test_tui_select_changed_saves_model():
 
 
 @pytest.mark.anyio
-async def test_tui_process_book_passes_translation_model():
+async def test_tui_process_book_passes_translation_model(tmp_path, monkeypatch):
     """Verify process_book passes translation_model to MistralTTSClient when target_lang is specified."""
+    monkeypatch.chdir(tmp_path)
     with tempfile.TemporaryDirectory() as tmpdir:
         text_file = Path(tmpdir) / "sample.txt"
         text_file.write_text("Hello world", encoding="utf-8")
@@ -59,6 +60,10 @@ async def test_tui_process_book_passes_translation_model():
              patch("src.tui.TextSplitter") as mock_splitter:
             
             mock_tts = MagicMock()
+            mock_tts.model = 'voxtral-mini-tts-2603'
+            async def generate(text, path):
+                path.write_bytes(b'valid fake audio' * 20)
+            mock_tts.generate_audio = AsyncMock(side_effect=generate)
             mock_get_tts.return_value = mock_tts
 
             mock_trans_client = MagicMock()
@@ -66,6 +71,7 @@ async def test_tui_process_book_passes_translation_model():
             mock_client_cls.return_value = mock_trans_client
 
             mock_splitter.return_value.split.return_value = ["Hello world"]
+            mock_splitter.return_value.max_chars = 1000
 
             await app.process_book(
                 text_path=str(text_file),
@@ -83,3 +89,4 @@ async def test_tui_process_book_passes_translation_model():
                 api_key="test_api_key",
                 translation_model="mistral-large-latest"
             )
+            assert not any(str(call.args[0]).startswith('Error:') for call in app.log_message.call_args_list)
