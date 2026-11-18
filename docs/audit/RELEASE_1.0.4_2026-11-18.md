@@ -62,7 +62,7 @@ zakaz budowania obrazu, odwołany późniejszą zgodą na to wydanie.
 
 Przed wymianą kontenera zatrzymać starą instancję i wykonać kopię całego storage.
 Zmiany haseł, Origin/CSRF, MOBI i tożsamości referencji opisuje
-[README](../../README.md#security-update--104). TLS i kontrola dostępu LAN
+[README](../RELEASE_NOTES.md#security-update--104). TLS i kontrola dostępu LAN
 pozostają ustawieniami wdrożenia; publikacja na Docker Hub ich nie zmienia.
 
 ```bash
