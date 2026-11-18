@@ -5,9 +5,10 @@ source with an audio-only component profile. It no longer installs Debian's
 general FFmpeg package and its XML/video/network dependency graph. The Mistral
 SDK/Python lock policy is documented in [Dependencies](DEPENDENCIES.md).
 
-No Docker image has been built or deployed for this update. Local native builds
-and tests establish the source profile's behavior, not the contents of a future
-Debian trixie image or the installed LAN container.
+The later authorized Docker release is **1.0.4**; see its
+[image verification, scan and digest](audit/RELEASE_1.0.4_2026-11-18.md).
+The local validation below preceded that release. Publishing the image did not
+update the installed LAN container.
 
 ## Source and provenance
 
@@ -32,7 +33,7 @@ or its embedded dependency versions.
 [build_ffmpeg.sh](../scripts/build_ffmpeg.sh) is shared by Docker's build stage
 and the local validation procedure. Its internal FFmpeg libraries are static;
 LAME, libc and libm are dynamic. Local `ldd` confirmed that dependency set and
-no libxml2. The future runtime stage installs `libmp3lame0`, not the compiler
+no libxml2. The runtime stage installs `libmp3lame0`, not the compiler
 toolchain. An explicit Dockerfile guard rejects an installed libxml2 package.
 
 - Input demuxers: MP3, WAV, concat and MOV/MP4 (for verifying generated M4B).
@@ -113,7 +114,7 @@ and is not claimed fixed. Its native binaries/final app need Windows acceptance
 and dependency attestation. Other source installations retain the administrator's
 selected FFmpeg until they install/select an updated binary.
 
-After the operator explicitly authorizes a Docker build: verify runtime versions,
+For each subsequent Docker release: verify runtime versions,
 dynamic linkage, absence of libxml2, entrypoint/nonroot startup, all container
 smokes, a fresh OS/native SBOM/CVE scan and the exact deployable digest. No local
 source test substitutes for those release checks.

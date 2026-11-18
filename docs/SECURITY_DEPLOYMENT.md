@@ -179,3 +179,12 @@ The [SDK/native update](audit/SECURITY_DEPENDENCY_UPDATES_2026-11-18.md) selects
 Mistral 2.10.1 and patched OpenTelemetry in the locks. Dockerfile now prepares
 an audio-only FFmpeg 9.0.2 without libxml2; local native tests passed, but this
 stage has not built/published an image or changed the LAN deployment either.
+
+
+### Later authorized release: 1.0.4
+
+The operator subsequently authorized building and publishing the updated image.
+`marcinlis82/mistral-tts:1.0.4` is published for linux/amd64; earlier paragraphs
+record stage-specific verification and the older local image. See the
+[release checks, remaining CVEs and exact digest](audit/RELEASE_1.0.4_2026-11-18.md).
+The LAN deployment has not been changed by publishing this image.
