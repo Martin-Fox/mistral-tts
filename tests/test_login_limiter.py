@@ -67,7 +67,7 @@ def test_endpoint_limits_before_hashing_and_ignores_forwarded_headers(monkeypatc
     monkeypatch.setattr(web, 'login_limiter', limiter)
     verify = Mock(return_value=False)
     monkeypatch.setattr(web, 'verify_password', verify)
-    client = TestClient(web.app)
+    client = TestClient(web.app, headers={'X-Requested-With': 'Booksmith'})
     for i in range(2):
         response = client.post('/api/auth/login', json={'username': 'admin', 'password': 'wrong'},
                                headers={'X-Forwarded-For': f'192.0.2.{i}'})
@@ -85,7 +85,7 @@ def test_successful_logins_also_consume_allowance(monkeypatch):
     monkeypatch.setattr(web, 'active_sessions', {})
     monkeypatch.setattr(web, 'verify_password', Mock(return_value=True))
     monkeypatch.setattr(web, 'APP_USERNAME', 'test-user')
-    client = TestClient(web.app)
+    client = TestClient(web.app, headers={'X-Requested-With': 'Booksmith'})
     payload = {'username': 'test-user', 'password': 'test-only-password'}
     assert client.post('/api/auth/login', json=payload).status_code == 200
     assert client.post('/api/auth/login', json=payload).status_code == 200

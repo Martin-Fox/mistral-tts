@@ -1,0 +1,53 @@
+zlib1g:
+  Installed: 1:1.3.dfsg+really1.3.1-1+b1
+  Candidate: 1:1.3.dfsg+really1.3.1-1+deb13u1
+  Version table:
+     1:1.3.dfsg+really1.3.1-1+deb13u1 500
+        500 http://deb.debian.org/debian-security trixie-security/main amd64 Packages
+ *** 1:1.3.dfsg+really1.3.1-1+b1 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages
+        100 /var/lib/dpkg/status
+libxml2:
+  Installed: 2.12.7+dfsg+really2.9.14-2.1+deb13u3
+  Candidate: 2.12.7+dfsg+really2.9.14-2.1+deb13u3
+  Version table:
+ *** 2.12.7+dfsg+really2.9.14-2.1+deb13u3 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages
+        100 /var/lib/dpkg/status
+     2.12.7+dfsg+really2.9.14-2.1+deb13u1 500
+        500 http://deb.debian.org/debian-security trixie-security/main amd64 Packages
+libexpat1:
+  Installed: 2.9.0-1~deb13u1
+  Candidate: 2.9.0-1~deb13u1
+  Version table:
+ *** 2.9.0-1~deb13u1 500
+        500 http://deb.debian.org/debian-security trixie-security/main amd64 Packages
+        100 /var/lib/dpkg/status
+     2.8.3-1~deb13u1 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages
+ffmpeg:
+  Installed: 7:7.1.5-0+deb13u1
+  Candidate: 7:7.1.5-0+deb13u1
+  Version table:
+ *** 7:7.1.5-0+deb13u1 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages
+        500 http://deb.debian.org/debian-security trixie-security/main amd64 Packages
+        100 /var/lib/dpkg/status
+libssl3t64:
+  Installed: 3.5.7-1~deb13u3
+  Candidate: 3.5.7-1~deb13u3
+  Version table:
+ *** 3.5.7-1~deb13u3 500
+        500 http://deb.debian.org/debian-security trixie-security/main amd64 Packages
+        100 /var/lib/dpkg/status
+     3.5.7-1~deb13u2 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages
+ca-certificates:
+  Installed: 20250419+deb13u1
+  Candidate: 20250419+deb13u1
+  Version table:
+ *** 20250419+deb13u1 500
+        500 http://deb.debian.org/debian-security trixie-security/main amd64 Packages
+        100 /var/lib/dpkg/status
+     20250419 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages

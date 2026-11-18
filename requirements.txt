@@ -14,9 +14,9 @@ annotated-types==0.7.0 \
     #   -c constraints.txt
     #   -c requirements-dev.txt
     #   pydantic
-anyio==4.13.0 \
-    --hash=sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708 \
-    --hash=sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc
+anyio==4.14.2 \
+    --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494 \
+    --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f
     # via
     #   -c requirements-dev.txt
     #   httpx
@@ -84,13 +84,6 @@ idna==3.20 \
     #   -c requirements-dev.txt
     #   anyio
     #   httpx
-importlib-metadata==8.7.1 \
-    --hash=sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb \
-    --hash=sha256:5a1f80bf1daa489495071efbb095d75a634cf28a8bc299581244063b53176151
-    # via
-    #   -c constraints.txt
-    #   -c requirements-dev.txt
-    #   opentelemetry-api
 jsonpath-python==1.1.6 \
     --hash=sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4 \
     --hash=sha256:dded9932b4ec41fb8726e09c83afa4e6be618f938c2db287cc2a81723c639671
@@ -135,9 +128,9 @@ mdurl==0.1.2 \
     #   -c constraints.txt
     #   -c requirements-dev.txt
     #   markdown-it-py
-mistralai==2.4.9 \
-    --hash=sha256:8e2f8a58697455f2113b4f6d0d1bd28d66d3eb51f94ff24b9d22a21dea531520 \
-    --hash=sha256:9a6465b8bddf825d76cf80ab54d55bb8089fdf5aafc0a7943ae74c825df97939
+mistralai==2.10.1 \
+    --hash=sha256:43b61643ba4f120463e5faf7305a6f40eb29f8e3a21321893969e56c20ed3fbc \
+    --hash=sha256:443b306392ae1e86edaec39dbafcf79deb735799a00abef4611531004e22b1b2
     # via
     #   -c requirements-dev.txt
     #   -r requirements.in
@@ -147,17 +140,17 @@ mobi==0.4.1 \
     # via
     #   -c requirements-dev.txt
     #   -r requirements.in
-opentelemetry-api==1.39.1 \
-    --hash=sha256:2edd8463432a7f8443edce90972169b195e7d6a05500cd29e6d13898187c9950 \
-    --hash=sha256:fbde8c80e1b937a2c61f20347e91c0c18a1940cecf012d62e65a7caf08967c9c
+opentelemetry-api==1.45.2 \
+    --hash=sha256:2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34 \
+    --hash=sha256:d7b0008e21e5fd61cbe7a7f34ca3b6905a78ab677d9bc395e299359c75cda6b4
     # via
     #   -c constraints.txt
     #   -c requirements-dev.txt
     #   mistralai
     #   opentelemetry-semantic-conventions
-opentelemetry-semantic-conventions==0.60b1 \
-    --hash=sha256:87c228b5a0669b748c76d76df6c364c369c28f1c465e50f661e39737e84bc953 \
-    --hash=sha256:9fa8c8b0c110da289809292b0591220d3a7b53c1526a23021e977d68597893fb
+opentelemetry-semantic-conventions==0.66b2 \
+    --hash=sha256:4cbe61e5f9275d57ab31708446e7938ef4291ebbe6a7fca6f7a629c5acae87d8 \
+    --hash=sha256:7da5f1a5dc4383eb66711d4d3d3e71824d9403ac1559fea021cc103c1a4c4976
     # via
     #   -c constraints.txt
     #   -c requirements-dev.txt
@@ -317,9 +310,9 @@ python-dateutil==2.9.0.post0 \
     #   -c constraints.txt
     #   -c requirements-dev.txt
     #   mistralai
-python-dotenv==0.21.0 \
-    --hash=sha256:1684eb44636dd462b66c3ee016599815514527ad99965de77f43e0944634a7e5 \
-    --hash=sha256:b77d08274639e3d34145dfa6c7008e66df0f04b7be7a75fd0d5292c191d79045
+python-dotenv==1.2.2 \
+    --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a \
+    --hash=sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3
     # via
     #   -c requirements-dev.txt
     #   -r requirements.in
@@ -406,10 +399,3 @@ win32-setctime==1.2.1 ; sys_platform == 'win32' \
     # via
     #   -c requirements-dev.txt
     #   loguru
-zipp==4.1.0 \
-    --hash=sha256:25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f \
-    --hash=sha256:4cb57381f544315db7688e976e922a2b18cdb513d21cc194eb42232ba2a3e602
-    # via
-    #   -c constraints.txt
-    #   -c requirements-dev.txt
-    #   importlib-metadata

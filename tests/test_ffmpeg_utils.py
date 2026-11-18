@@ -207,31 +207,39 @@ def test_mistral_preprocessing_and_probe_use_resolved_binaries(tmp_path, monkeyp
     from unittest.mock import AsyncMock, Mock
     from src.api.mistral_client import MistralTTSClient
 
+    import wave
     reference = tmp_path / 'voice.wav'
-    reference.write_bytes(b'synthetic reference')
-    async def process(command, *, timeout):
+    with wave.open(str(reference), 'wb') as audio:
+        audio.setparams((1, 2, 24000, 0, 'NONE', 'not compressed'))
+        audio.writeframes(b'\x00\x00' * 24000)
+    original = reference.read_bytes()
+    async def process(command, *, timeout, **options):
         from pathlib import Path
         assert timeout > 0
-        if command[0] == '/bundled/ffmpeg':
-            Path(command[-1]).write_bytes(b'processed reference')
+        if '/bundled/ffmpeg' in command:
+            assert 'MISTRAL_API_KEY' not in options['env']
+            Path(command[-1]).write_bytes(original)
             return Mock(stdout=b'', stderr=b'')
         assert command[0] == '/bundled/ffprobe'
         return Mock(stdout=b'1.5\n', stderr=b'')
 
     runner = AsyncMock(side_effect=process)
-    monkeypatch.setattr('src.api.mistral_client.get_ffmpeg_path', lambda: '/bundled/ffmpeg')
+    monkeypatch.setattr('src.core.voice_reference.get_ffmpeg_path', lambda: '/bundled/ffmpeg')
     monkeypatch.setattr('src.api.mistral_client.get_ffprobe_path', lambda: '/bundled/ffprobe')
+    monkeypatch.setattr('src.core.voice_reference.run_process_async', runner)
     monkeypatch.setattr('src.api.mistral_client.run_process_async', runner)
     client = MistralTTSClient('synthetic-key')
     client.client = Mock(audio=Mock(speech=Mock(complete_async=AsyncMock(
         return_value=Mock(audio_data=None, audio=b'a' * 200)))))
     async def run():
         await client.clone_voice(reference)
-        assert client.voice_sample_bytes == b'processed reference'
+        assert client.voice_sample_bytes == original
         await client.generate_audio('source text', tmp_path / 'chunk.mp3', retry_count=1)
     asyncio.run(run())
-    assert reference.read_bytes() == b'synthetic reference'
-    assert [call.args[0][0] for call in runner.call_args_list] == ['/bundled/ffmpeg', '/bundled/ffprobe']
+    assert reference.read_bytes() == original
+    assert '/bundled/ffmpeg' in runner.call_args_list[0].args[0]
+    assert runner.call_args_list[1].args[0][0] == '/bundled/ffprobe'
+
 
 def test_web_serves_bundled_assets_outside_source_directory(tmp_path):
     """A fresh WebUI import binds both routes to PyInstaller's asset directory."""

@@ -12,7 +12,7 @@ Mistral-TTS-Booksmith bridges the gap between raw text / ebook files and polishe
 - **Zero-Shot Voice Cloning:** Clones voice profiles using a reference audio sample (.mp3/.wav) via Mistral's native zero-shot endpoints, with automatic afftdn audio denoising.
 - **Preset Voice Selection:** Built-in high-quality Mistral voices (`en_paul_neutral`, `fr_marie_neutral`, etc.) and OpenAI voices (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`).
 - **Dual TTS Engine Architecture:** Switch seamlessly between Mistral Voxtral (`voxtral-mini-tts-2603`) and OpenAI TTS (`tts-1`).
-- **Multi-Format Ingestion:** Ingests plain text (.txt), subtitles (.srt with timecode stripping), and ebooks (.epub, .mobi).
+- **Multi-Format Ingestion:** Ingests plain text (.txt), subtitles (.srt with timecode stripping), and EPUB. MOBI is available only for trusted local CLI/TUI inputs; WebUI upload/resume is disabled until extraction is isolated.
 - **Intelligent Text Segmentation:** Tokenizes long texts dynamically based on punctuation, sentence boundaries, and character constraints to prevent API truncation while preserving semantic flow and avoiding dropped trailing text.
 - **Configurable Translation Subsystem:** Translates text and subtitle files using Mistral Chat Completion models (`ministral-8b-latest` default, `ministral-3b-latest`, `mistral-small-latest`, `mistral-medium-latest`, `mistral-large-latest`) with rate-limit handling and JSON batch modes.
 - **Audio Compiling & Mastering:** Merges independent audio buffers seamlessly using FFmpeg concat demuxer, injecting natural-sounding pause intervals between segments, appending format-matched trailing silence to prevent `loudnorm` filter cutoff, and performing strict decoded presentation duration verification (`ffmpeg -f null -`) against expected chunk totals.
@@ -54,6 +54,7 @@ mistral-tts/
 │   │   ├── task_store.py      # Durable private resume inputs and translation checkpoints
 │   │   ├── storage_retention.py # State-aware maintenance and soft disk budgets
 │   │   ├── ffmpeg_utils.py    # Multi-tier FFmpeg/FFprobe binary resolution
+│   │   ├── voice_reference.py # Restricted MP3/PCM WAV decoding and reference budgets
 │   │   ├── task_db.py         # SQLite persistent state management
 │   │   └── text_splitter.py   # Semantic chunking logic
 │   ├── web/
@@ -120,11 +121,13 @@ mistral-tts/
 
 ## Constraints
 - **API Payload Constraints:** Individual text chunks must strictly adhere to Mistral and OpenAI API character/token limits.
-- **Local System Dependencies:** Requires **FFmpeg** and **ffprobe** in PATH or resolved from the bundled/portable binary directories. Windows verification targets CPython 3.11 with UTF-8 mode; native acceptance is tracked in `docs/WINDOWS.md`.
+- **Local System Dependencies:** Requires **FFmpeg** and **ffprobe** in PATH or resolved from the bundled/portable binary directories. Docker targets a hash-pinned audio-only FFmpeg 9.0.2 build without networking or libxml2; Windows packaging pins the 9.0.2 archive separately. Source installations must maintain their own native binaries. Windows verification targets CPython 3.11 with UTF-8 mode; native acceptance is tracked in `docs/WINDOWS.md`.
+- **Untrusted Input Processing:** Voice references accept MP3/PCM WAV only, normalize to mono 24 kHz PCM, and fail without fallback. Linux reference decoding requires util-linux `prlimit` for address-space/CPU/file limits. Other platforms retain format, allocation, output and time guards but require native resource-limit acceptance. These controls are not an OS sandbox against arbitrary native code execution. MOBI extraction in CLI/TUI is for trusted local files only.
 - **Filesystem Locations:** WebUI static assets are resolved from the PyInstaller extraction directory or relative to `src/web.py`; mutable `storage/` stays relative to the launch working directory. The desktop launcher selects the executable directory when frozen, or the checkout during source execution. No storage migration is implied by launching from another directory.
 - **Audio Verification:** Compilation probes decoded chunk/output duration, pads trailing silence (1.0s default) to protect `loudnorm` buffers, and rejects output more than 4.0s shorter than the expected chunk/pause/padding total. Only verified output is published atomically. Duration checks do not prove linguistic completeness of provider output.
 - **Deployment and Recovery:** One shared WebUI account, worker and replica; process-local sessions expire and reset on restart. Remote access needs configured HTTPS; Secure cookies do not provide TLS. Retention defaults to dry-run, protects failed/interrupted jobs and uses soft disk thresholds rather than hard quotas. Use stopped whole-storage backups before migration; see `docs/OPERATIONS.md`.
-- **SDK Compatibility:** The dependency locks retain `mistralai==2.4.9`; OpenAI TTS uses HTTPX directly and does not require the OpenAI SDK. Regenerate and verify both dependency locks when updating versions.
+- **WebUI Security:** New passwords require 12-1024 characters. Persisted legacy passwords below that policy grant a change-only session until rotation; successful changes revoke all sessions. State-changing HTTP requests require matching Origin or an explicit non-browser header. EPUB XML metadata forbids DTD/entities and has depth/element limits; HTML chapter doctypes remain supported.
+- **SDK Compatibility:** The dependency locks select `mistralai==2.10.1`, `opentelemetry-api==1.45.2` and `opentelemetry-semantic-conventions==0.66b2`. The 2.x SDK retains the tested HTTPX request/response contract; OpenAI TTS uses HTTPX directly and does not require the OpenAI SDK. Regenerate and verify both dependency locks and offline SDK wire tests when updating versions.
 
 ---
 

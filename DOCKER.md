@@ -3,16 +3,27 @@
 This repository contains the containerized version of **Mistral-TTS**, a text-to-speech pipeline designed to convert long-form text (articles, books, essays) into seamless audiobooks. It integrates the **Mistral AI Voxtral TTS** API (with zero-shot voice cloning), **OpenAI TTS** as an alternative engine, configurable **Mistral chat models** (default: `ministral-8b-latest`) for pre-translation, and support for EPUB, MOBI, SRT, and TXT ingestion.
 
 The Dockerfile bundles Python 3.11, runtime dependencies, **FFmpeg and ffprobe**.
-Build the current checkout to include its remediations; historical registry tags
-(including `1.0.2`) have not been checked against this branch.
+It builds a hash-pinned audio-only FFmpeg **9.0.2** without libxml2 or network
+protocols in a separate stage. The final stage avoids distro FFmpeg's multimedia
+dependency graph, pins the Debian trixie base digest, explicitly upgrades zlib
+to a corrected minimum, and installs util-linux for decoder resource limits.
+Installers are removed after dependency validation; pip is unavailable at runtime.
+The versioned image for this security update is
+`marcinlis82/mistral-tts:1.0.4` (Linux amd64). See the
+[1.0.4 change notes](README.md#security-update--104) before upgrading.
 
 ```bash
-docker build -t mistral-tts:audit-local .
+docker pull marcinlis82/mistral-tts:1.0.4
 mkdir -p storage
 ```
 
 See [Operations](docs/OPERATIONS.md) for TLS, restart recovery, backup/restore and
-upgrade/rollback procedures. All examples below use the locally built image.
+upgrade/rollback procedures. All examples below use the versioned image. To build from source, run
+`docker build -t marcinlis82/mistral-tts:1.0.4 .` in this checkout.
+See [deployment security](docs/SECURITY_DEPLOYMENT.md) for LAN-only publication,
+HTTP/HTTPS settings, request limits and image identity checks. Docker and desktop
+launches ignore forwarded headers by default; a reverse proxy needs an explicit
+command override with its actual trusted source address.
 
 ---
 
@@ -29,7 +40,7 @@ docker run -d \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
   --name mistral-tts \
-  mistral-tts:audit-local
+  marcinlis82/mistral-tts:1.0.4
 ```
 
 Once running, access the WebUI at **`http://localhost:8000`**.
@@ -42,7 +53,7 @@ To run the terminal configuration and progress tracking interface inside the con
 docker run -it --rm \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
-  mistral-tts:audit-local \
+  marcinlis82/mistral-tts:1.0.4 \
   python -m src.cli --tui
 ```
 
@@ -53,7 +64,7 @@ For automated script integrations, execute the CLI directly:
 docker run --rm \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
-  mistral-tts:audit-local \
+  marcinlis82/mistral-tts:1.0.4 \
   python -m src.cli \
   --text /app/storage/book.txt \
   --voice /app/storage/sample.mp3 \
@@ -83,6 +94,13 @@ process-timeout and retention tables are in README.
 | `MISTRAL_TRANSLATION_MODEL` | Mistral chat model for text translation (default: `ministral-8b-latest`). |
 | `APP_USERNAME` | Custom username for WebUI cookie authentication (default: `admin`). |
 | `APP_PASSWORD` | Required unique password for WebUI cookie authentication; empty values and `admin` are rejected at startup. |
+
+Without an existing auth file, use 12-1024 characters (at least 12 after trimming)
+before upgrading. Persisted legacy short passwords allow only a password-change
+session until rotated. Non-browser HTTP clients must supply
+`X-Requested-With: Booksmith` on writes without Origin; the frontend does this
+automatically. See [request/browser security](README.md#request-origin-and-browser-security)
+for CSP, proxy origin handling and API documentation availability.
 
 ---
 
@@ -262,18 +280,29 @@ are in bytes, character budgets in Python Unicode characters):
 | Variable | Default | Scope |
 | --- | --- | --- |
 | `MAX_REQUEST_BYTES` | 33554432 (32 MiB) | Complete WebUI generation body, including multipart overhead |
+| `MAX_JSON_REQUEST_BYTES` | 65536 (64 KiB) | Other request bodies, including login/config JSON and forms |
+| `REQUEST_BODY_TIMEOUT_SECONDS` | 120 | Total body reception deadline |
+| `REQUEST_BODY_IDLE_TIMEOUT_SECONDS` | 15 | Wait for the next body chunk |
 | `MAX_TEXT_UPLOAD_BYTES` | 10485760 (10 MiB) | WebUI text/ebook upload and local input file reads |
 | `MAX_VOICE_UPLOAD_BYTES` | 20971520 (20 MiB) | WebUI voice reference upload |
+| `MAX_VOICE_SECONDS` | 30 | Maximum voice reference duration |
+| `MAX_VOICE_PROCESS_MEMORY_BYTES` | 536870912 (512 MiB) | Linux reference-decoder address-space limit |
 | `MAX_TEXT_CHARS` | 2000000 | Input/extracted text and completed translation |
 | `MAX_EPUB_BYTES` | 67108864 (64 MiB) | Sum of ZIP uncompressed sizes and cumulative actual EPUB reads |
 | `MAX_EPUB_ENTRY_BYTES` | 8388608 (8 MiB) | One EPUB element, including XML metadata |
 | `MAX_EPUB_ENTRIES` | 10000 | EPUB ZIP entry count |
+| `MAX_EPUB_XML_DEPTH` | 64 | Container/OPF metadata nesting depth |
+| `MAX_EPUB_XML_ELEMENTS` | 10000 | Elements in one XML metadata document |
 | `MAX_RUNNING_JOBS` | 2 | Running WebUI pipelines, including cache waits and compilation |
 | `MAX_QUEUED_JOBS` | 2 | Additional admitted WebUI requests/jobs; zero is allowed |
 
 Restart the WebUI after changing configuration. Invalid limits prevent startup.
 The parser also limits multipart uploads to 2 files and forms to 32 fields.
-When all running/queued slots are occupied, new generation requests receive
+Anonymous generate/resume requests receive `401` before any body read, storage
+check or admission. Slow body reads receive `408` and release their slots; body
+deadlines do not limit pipeline execution or SSE. Login/config bodies have their
+own smaller limit before parsing. When all running/queued slots are occupied,
+new authenticated generation requests receive
 HTTP `429` with `Retry-After: 5`, before reading their body. Admission includes
 uploads and preflight, so concurrent preflight work is bounded too. Accepted jobs
 may remain `Pending` while waiting for a worker. Capacity is released after work,
@@ -283,9 +312,10 @@ in-process execution queue; restart requires explicit resume from saved inputs.
 The concurrency budget applies to this single WebUI process. Independent CLI/TUI
 processes do not share that worker budget, but their input parsing uses the same
 file/text/EPUB limits. EPUB metadata and actual decompressed reads are checked;
-repeated spine reads also consume the decompression budget. MOBI output size/text
-are checked after extraction; the external MOBI library's extraction phase is
-not sandboxed or given an unpacking quota by this change. Configure reverse-proxy
+repeated spine reads also consume the decompression budget. MOBI upload and resume
+are rejected with `415` by WebUI before extraction or paid work. Convert these
+files to EPUB/TXT. Local CLI/TUI MOBI parsing is for trusted files only and still
+has no isolated extraction quota. Configure reverse-proxy
 request-size and upload-timeout limits as well for network deployments.
 
 ### Restart recovery and explicit resume (WebUI)
@@ -349,20 +379,25 @@ WebUI, CLI and TUI compilation runs outside the event loop. Cancellation keeps
 WebUI/CLI/TUI cache locks and compiler workspaces until the compiler thread has stopped. The TUI remains
 responsive while compiling; Mistral chunk probing is asynchronous too.
 
-Voice denoising uses a private temporary file with a valid audio extension and
-never overwrites the user's original reference. Its processed bytes are reused
-for TTS requests; failure is logged with bounded FFmpeg stderr and falls back to
-the original reference. Cancellation propagates after child cleanup. The voice
-size limit also applies to local references and processed buffers.
+References accept matching MP3/PCM WAV only. FFmpeg uses an explicit demuxer,
+codec allowlist, `file` protocol, one decoding/filter thread and a 16 MiB
+single-allocation guard. It normalizes to denoised mono 24 kHz s16 WAV. Duration
+and output-size limits reject the sample rather than sending a truncated result.
+Failures never fall back to the original. The original source file is preserved.
+WebUI preflight rejects invalid references before translation/TTS or task creation.
 
-Reference-preprocessing version 2 and the processed-byte fingerprint distinguish
-filtered audio from fallback audio in the cache. Preset-voice cache identities
-remain unchanged. Previous cloned-voice cache entries are not reused and old
-cloned-voice resume snapshots are rejected as incompatible; resubmit those jobs
-to generate a consistent audiobook with the corrected preprocessing. This can
-incur new API charges. The [portable source smoke](docs/WINDOWS.md) covers
-process handling, but native Windows acceptance remains pending; recorded local
-results are Linux-only.
+The decoder runs in a private temporary directory without application secrets
+or proxy settings in its environment. Linux `prlimit` enforces address-space,
+CPU and file-size budgets; absence of prlimit fails closed. Async pipe capture
+is limited to 64 KiB per stream; overflow kills and reaps the child. These are
+resource/format restrictions, not complete filesystem/network sandboxing after
+arbitrary code execution. Apply container memory/CPU/disk limits as appropriate.
+
+Preprocessing version **3** prevents reuse of older cloned-voice caches/resume
+snapshots; outputs and presets are preserved. Resubmitting an incompatible job
+can incur API charges. See README for configuration, platform limitations and
+the native Windows acceptance gate. Earlier stage reports retain their
+source-only verification status; release image checks are separate.
 
 ### API retries and deadlines
 
@@ -470,7 +505,13 @@ The image installs the runtime-only `requirements.txt` with exact versions,
 artifact hash verification and wheel-only installation, followed by `pip check`.
 Pytest, Ruff and the uv lock compiler belong to the separate development lock.
 HTTPX is a direct runtime requirement; FFmpeg remains an OS executable rather
-than a Python wrapper dependency. The Mistral SDK stays at `2.4.9`.
+than a Python wrapper dependency. The Mistral SDK is pinned to `2.10.1` with
+OpenTelemetry API `1.45.2` and semantic conventions `0.66b2`. These locks have
+offline tests against the real SDK with a mock HTTP transport.
+
+See [Native dependencies](docs/NATIVE_DEPENDENCIES.md) for the FFmpeg source/hash,
+restricted features and remaining native CVE limits. Python lock scans and
+source-level tests do not replace scanning and testing the final image.
 
 See [Dependency management](docs/DEPENDENCIES.md) for installation and the paired
 runtime/dev lock update procedure. The Python package locks do not pin the base

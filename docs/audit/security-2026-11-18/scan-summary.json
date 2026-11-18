@@ -1,0 +1,232 @@
+{
+  "date_utc": "2026-11-18",
+  "source_revision": "676b62ec2e782cdf38ac8caad923726945ef2343",
+  "trivy_version": "0.76.2",
+  "pip_audit_version": "2.10.1",
+  "bandit_version": "1.9.4",
+  "trivy_db": {
+    "Version": 2,
+    "NextUpdate": "2026-11-19T07:15:21.579241907Z",
+    "UpdatedAt": "2026-11-18T07:15:21.579242117Z",
+    "DownloadedAt": "2026-11-18T10:32:53.379430737Z"
+  },
+  "image_id": "sha256:6f28e53cb126b1470a01c64448aa31489906f7eb4cbaa3e69ec10fae3f0e0c52",
+  "repo_digests": [
+    "marcinlis82/mistral-tts@sha256:32eed86acb52cc7b61191052a5b31ea0d47fd0d4598f09766704f2e6ba8fc9b2"
+  ],
+  "results": [
+    {
+      "target": "marcinlis82/mistral-tts:1.0.3 (debian 13.7)",
+      "rows": 1675,
+      "unique_ids": 403,
+      "unique_ids_by_severity": {
+        "LOW": 113,
+        "HIGH": 73,
+        "MEDIUM": 116,
+        "UNKNOWN": 100,
+        "CRITICAL": 1
+      }
+    },
+    {
+      "target": "Python",
+      "rows": 15,
+      "unique_ids": 15,
+      "unique_ids_by_severity": {
+        "CRITICAL": 1,
+        "MEDIUM": 10,
+        "HIGH": 2,
+        "LOW": 2
+      }
+    }
+  ],
+  "pip_audit_runtime": {
+    "packages": 39,
+    "findings": [
+      {
+        "package": "anyio",
+        "installed": "4.13.0",
+        "id": "PYSEC-2026-4025",
+        "aliases": [
+          "CVE-2026-63374",
+          "GHSA-82r6-8w77-94w6"
+        ],
+        "fixed_versions": [
+          "4.14.2"
+        ]
+      },
+      {
+        "package": "anyio",
+        "installed": "4.13.0",
+        "id": "PYSEC-2026-4024",
+        "aliases": [
+          "CVE-2026-64847",
+          "GHSA-5p39-cfhj-2xmp"
+        ],
+        "fixed_versions": [
+          "4.14.2"
+        ]
+      },
+      {
+        "package": "opentelemetry-api",
+        "installed": "1.39.1",
+        "id": "CVE-2026-114603",
+        "aliases": [
+          "GHSA-xcq7-p3pf-p88h"
+        ],
+        "fixed_versions": [
+          "1.45.1"
+        ]
+      },
+      {
+        "package": "opentelemetry-api",
+        "installed": "1.39.1",
+        "id": "CVE-2026-126360",
+        "aliases": [
+          "GHSA-mf5v-w3w3-f6cg"
+        ],
+        "fixed_versions": [
+          "1.45.2"
+        ]
+      },
+      {
+        "package": "python-dotenv",
+        "installed": "0.21.0",
+        "id": "PYSEC-2026-2270",
+        "aliases": [
+          "GHSA-mf9w-mj56-hr94",
+          "CVE-2026-28684"
+        ],
+        "fixed_versions": [
+          "1.2.2"
+        ]
+      },
+      {
+        "package": "python-dotenv",
+        "installed": "0.21.0",
+        "id": "PYSEC-2026-2270",
+        "aliases": [
+          "GHSA-mf9w-mj56-hr94",
+          "CVE-2026-28684"
+        ],
+        "fixed_versions": [
+          "1.2.2"
+        ]
+      }
+    ]
+  },
+  "pip_audit_dev": {
+    "packages": 46,
+    "findings": [
+      {
+        "package": "anyio",
+        "installed": "4.13.0",
+        "id": "PYSEC-2026-4025",
+        "aliases": [
+          "GHSA-82r6-8w77-94w6",
+          "CVE-2026-63374"
+        ],
+        "fixed_versions": [
+          "4.14.2"
+        ]
+      },
+      {
+        "package": "anyio",
+        "installed": "4.13.0",
+        "id": "PYSEC-2026-4024",
+        "aliases": [
+          "CVE-2026-64847",
+          "GHSA-5p39-cfhj-2xmp"
+        ],
+        "fixed_versions": [
+          "4.14.2"
+        ]
+      },
+      {
+        "package": "opentelemetry-api",
+        "installed": "1.39.1",
+        "id": "CVE-2026-114603",
+        "aliases": [
+          "GHSA-xcq7-p3pf-p88h"
+        ],
+        "fixed_versions": [
+          "1.45.1"
+        ]
+      },
+      {
+        "package": "opentelemetry-api",
+        "installed": "1.39.1",
+        "id": "CVE-2026-126360",
+        "aliases": [
+          "GHSA-mf5v-w3w3-f6cg"
+        ],
+        "fixed_versions": [
+          "1.45.2"
+        ]
+      },
+      {
+        "package": "python-dotenv",
+        "installed": "0.21.0",
+        "id": "PYSEC-2026-2270",
+        "aliases": [
+          "GHSA-mf9w-mj56-hr94",
+          "CVE-2026-28684"
+        ],
+        "fixed_versions": [
+          "1.2.2"
+        ]
+      },
+      {
+        "package": "python-dotenv",
+        "installed": "0.21.0",
+        "id": "PYSEC-2026-2270",
+        "aliases": [
+          "GHSA-mf9w-mj56-hr94",
+          "CVE-2026-28684"
+        ],
+        "fixed_versions": [
+          "1.2.2"
+        ]
+      },
+      {
+        "package": "uv",
+        "installed": "0.11.7",
+        "id": "PYSEC-2026-4321",
+        "aliases": [
+          "GHSA-hq85-5cpj-mr62"
+        ],
+        "fixed_versions": [
+          "0.13.4"
+        ]
+      },
+      {
+        "package": "uv",
+        "installed": "0.11.7",
+        "id": "GHSA-4gg8-gxpx-9rph",
+        "aliases": [],
+        "fixed_versions": [
+          "0.11.15"
+        ]
+      }
+    ]
+  },
+  "bandit_metrics": {
+    "CONFIDENCE.HIGH": 14,
+    "CONFIDENCE.LOW": 1,
+    "CONFIDENCE.MEDIUM": 0,
+    "CONFIDENCE.UNDEFINED": 0,
+    "SEVERITY.HIGH": 0,
+    "SEVERITY.LOW": 11,
+    "SEVERITY.MEDIUM": 4,
+    "SEVERITY.UNDEFINED": 0,
+    "loc": 3785,
+    "nosec": 0,
+    "skipped_tests": 0
+  },
+  "tests": {
+    "passed": 185,
+    "warnings": 4,
+    "elapsed_seconds": 19.61,
+    "python": "3.11.2",
+    "note": "Selected regression suite, not complete test suite; no production state or paid requests."
+  }
+}
