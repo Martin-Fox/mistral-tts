@@ -10,13 +10,58 @@ For deployment, restart recovery, backups and upgrades, see
 [Tests and CI](docs/TESTING.md), [Windows acceptance](docs/WINDOWS.md) and
 [Dependency management](docs/DEPENDENCIES.md).
 
+## Security update — 1.0.4
+
+This release includes the November 2026 security audit remediations:
+
+- Requests are authenticated before upload processing and queue admission;
+  bounded request sizes, upload deadlines and disabled proxy-header trust by
+  default reduce unauthenticated resource consumption and address spoofing.
+- State-changing requests require a matching Origin or, for originless clients,
+  `X-Requested-With: Booksmith`. Browser responses include CSP, frame protection
+  and no-store headers. Interactive Swagger/ReDoc pages are disabled.
+- New passwords require 12–1024 characters. Existing short passwords allow only
+  password rotation; changing the password revokes all sessions.
+- Voice references accept MP3/PCM WAV only, with duration, allocation, process
+  and output limits. Normalization failures stop the job without sending the
+  original file to the provider. Linux adds `prlimit` resource limits.
+- EPUB XML metadata rejects DTD/entities and excessive nesting. WebUI MOBI
+  upload/resume is disabled; trusted local CLI/TUI MOBI remains available.
+- Both hashed Python locks include Mistral SDK 2.10.1, OpenTelemetry API 1.45.2,
+  AnyIO 4.14.2 and python-dotenv 1.2.2. Both locks had zero known findings in
+  the 2026-11-18 pip-audit scan.
+- Docker builds a hash-pinned audio-only FFmpeg 9.0.2 without libxml2, networking
+  or video codecs; runtime installers are removed and zlib has a corrected
+  minimum version. Windows packaging separately pins its FFmpeg archive/hash.
+
+Before upgrading, stop the old instance and back up all of `storage/`. Existing
+sessions reset on restart. Reference preprocessing version 3 invalidates older
+cloned-voice cache/resume identities; resubmission may incur provider charges.
+Update custom HTTP clients for the request header above, and configure trusted
+proxy forwarding explicitly when terminating HTTPS at a reverse proxy.
+
+Verification before image publication: **651 tests passed** with the new SDK
+and locally compiled FFmpeg, plus **223 portable smoke tests** (a subset).
+These are offline checks, not native Windows acceptance or a zero-CVE claim for
+the image. FFmpeg retains known native risks, including MOV parsing used for
+generated M4B verification; decoder limits are not a complete OS sandbox.
+See the [audit and remediation record](docs/audit/SECURITY_AUDIT_2026-11-18.md),
+[dependency update report](docs/audit/SECURITY_DEPENDENCY_UPDATES_2026-11-18.md),
+[native dependency limits](docs/NATIVE_DEPENDENCIES.md) and
+[deployment guidance](docs/SECURITY_DEPLOYMENT.md).
+
+The published **linux/amd64** image passed **7 Docker smoke checks**. Its package
+scan found **0 Critical** and **0 Python findings**, with **96 remaining OS CVEs**
+(including 11 High); compiled FFmpeg also retains separately documented risks.
+See the [1.0.4 image verification and digest](docs/audit/RELEASE_1.0.4_2026-11-18.md).
+
 ## 🚀 Features
 
 - **Interactive WebUI:** A premium, responsive single-page web application featuring glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, an in-browser console terminal streaming live server logs via Server-Sent Events (SSE), and a custom audio player for instant playback.
 - **Interactive TUI:** A modern terminal interface for easy configuration and progress monitoring.
 - **Windows Desktop Packaging:** PyInstaller specification and CI workflow for a portable executable with web assets and FFmpeg/ffprobe; native source/artifact acceptance remains pending.
 - **Integrated Translation:** Translate source files from a source language to a target language using configurable Mistral chat models (default: `ministral-8b-latest`, with support for `ministral-3b-latest`, `mistral-small-latest`, `mistral-medium-latest`, and `mistral-large-latest`) before the TTS phase. Supports rate-limit-aware retries and preserves subtitle timecodes.
-- **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`), and electronic books (`.epub` and unencrypted `.mobi`), automatically extracting content in the correct reading order.
+- **Multi-Format Ingestion:** Direct support for plain text (`.txt`), subtitles (`.srt`) and EPUB. Unencrypted MOBI remains available for trusted local CLI/TUI files; WebUI uploads and resume of MOBI jobs are disabled until extraction is isolated.
 - **Audio Truncation Safeguard & Duration Verification:** Adds trailing silence (1.0s default), verifies full decoded duration with FFmpeg and rejects output more than 4.0s shorter than the expected total. This detects duration loss; it does not prove linguistic completeness or detect every short omission.
 
 
@@ -95,7 +140,7 @@ Run from the checkout, then open `http://localhost:8000`. Keep one worker;
 For remote access, configure HTTPS and trusted proxy forwarding as described in
 [Operations](docs/OPERATIONS.md#network-access-and-tls).
 
-* **Required credentials:** Before starting the WebUI, set `APP_PASSWORD` to a unique password in your environment or `.env`; `APP_USERNAME` defaults to `admin`. Empty credentials and the password `admin` are rejected at startup, including on localhost. Existing `storage/auth.json` credentials take precedence; use the [credential recovery procedure](docs/OPERATIONS.md#credential-recovery) if startup rejects them. The error never prints the configured password.
+* **Required credentials:** Before starting the WebUI, set `APP_PASSWORD` to a unique phrase of 12-1024 characters in your environment or `.env`; `APP_USERNAME` defaults to `admin`. Without an existing auth file, shorter credentials prevent startup, including on localhost. Persisted credentials take precedence; legacy short passwords permit a change-only login. Empty/default `admin` credentials remain rejected. See [credential recovery](docs/OPERATIONS.md#credential-recovery). Errors never print the configured password.
 
 
 ### Interactive TUI (Recommended)
@@ -254,18 +299,17 @@ inputs require resubmission, potentially with new API charges. See
 
 ## 🐳 Docker Setup
 
-Build this checkout to include its audit remediations; published registry tags
-have not been verified against this working tree:
+Use the versioned image for this security update:
 
 ```bash
-docker build -t mistral-tts:audit-local .
+docker pull marcinlis82/mistral-tts:1.0.4
 mkdir -p storage
 docker run -d \
   -p 127.0.0.1:8000:8000 \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
   --name mistral-tts \
-  mistral-tts:audit-local
+  marcinlis82/mistral-tts:1.0.4
 ```
 
 The private `.env` must configure a unique WebUI password. Docker `--env-file`
@@ -309,6 +353,18 @@ an auth file until the password is changed through the WebUI. Unicode passwords
 and usernames are supported. On POSIX, the credentials file has mode `0600`;
 on Windows, restrict access using filesystem ACLs.
 
+New environment credentials (when no auth file exists) and password changes
+require 12-1024 characters, with at least 12 after trimming surrounding whitespace.
+The actual password is preserved, including Unicode and whitespace; there is no
+mandatory mix of character types. Choose a unique phrase. Existing persisted
+short passwords are not rejected solely for their length at startup: after a
+correct login, the server returns `requires_password_change: true` and permits
+only auth status, password change and logout. The UI opens the change form;
+generation, data/config reads and resume return `403`, including before upload.
+Changing the password signs out all clients, then the new login has full access.
+Failed persistence leaves the restricted session available for retry. Lost
+passwords and credentials beyond input length bounds need operator recovery.
+
 Persisted credentials override the environment. If the file is damaged or contains
 rejected default credentials, stop the server and move `storage/auth.json` to a
 private backup location, configure a unique `APP_PASSWORD`, then restart. Protect
@@ -334,6 +390,30 @@ Explicit server CLI worker settings must also remain `1`.
   Logout revokes the current token. Expired sessions are removed during login and
   session validation. Running generation jobs continue after logout/session expiry;
   authenticated access to their progress requires a new login.
+
+### Request origin and browser security
+
+Every state-changing HTTP request, including login/logout, must have an `Origin`
+matching the request scheme, host and port. Default ports normalize and subdomains
+are not implicitly trusted. `null`, foreign or duplicated origins are rejected
+with `403` **before** reading the body or reserving generation capacity. The
+application does not trust raw forwarded headers; HTTPS proxies must configure
+Uvicorn's trusted proxy handling as described in Operations.
+
+Clients that omit Origin must send `X-Requested-With: Booksmith`. The WebUI adds
+it automatically. For example, a non-browser client can log in with that header
+and retain its session cookie. CLI/TUI do not use these HTTP routes. A bad Origin
+cannot be overridden by the custom header, and originless requests marked
+`Sec-Fetch-Site: cross-site` or `same-site` are rejected. Do not enable broad CORS
+without reviewing this contract. Custom clients using old headerless POSTs need
+to be updated; no CSRF-disable switch is provided.
+
+Responses have `nosniff`, frame protection, no-referrer policy and a CSP allowing
+scripts/connects only from the same origin. Styles retain inline CSS and the
+existing Google Fonts sources for UI compatibility. Root/API responses use
+`Cache-Control: no-store`. TLS/HSTS remain a reverse-proxy responsibility.
+Interactive `/docs` and `/redoc` are disabled because their default CDN/inline
+scripts conflict with the CSP; `/openapi.json` remains available.
 
 ### Login attempt limits
 
@@ -460,18 +540,37 @@ are in bytes, character budgets in Python Unicode characters):
 | Variable | Default | Scope |
 | --- | --- | --- |
 | `MAX_REQUEST_BYTES` | 33554432 (32 MiB) | Complete WebUI generation body, including multipart overhead |
+| `MAX_JSON_REQUEST_BYTES` | 65536 (64 KiB) | All other HTTP request bodies, including login, password changes and configuration (also forms) |
+| `REQUEST_BODY_TIMEOUT_SECONDS` | 120 | Total time to receive a complete request body |
+| `REQUEST_BODY_IDLE_TIMEOUT_SECONDS` | 15 | Maximum wait for the next request-body chunk |
 | `MAX_TEXT_UPLOAD_BYTES` | 10485760 (10 MiB) | WebUI text/ebook upload and local input file reads |
 | `MAX_VOICE_UPLOAD_BYTES` | 20971520 (20 MiB) | WebUI voice reference upload |
+| `MAX_VOICE_SECONDS` | 30 | Maximum accepted duration of a voice reference |
+| `MAX_VOICE_PROCESS_MEMORY_BYTES` | 536870912 (512 MiB) | Linux reference-decoder address-space limit, including shared libraries |
 | `MAX_TEXT_CHARS` | 2000000 | Input/extracted text and completed translation |
 | `MAX_EPUB_BYTES` | 67108864 (64 MiB) | Sum of ZIP uncompressed sizes and cumulative actual EPUB reads |
 | `MAX_EPUB_ENTRY_BYTES` | 8388608 (8 MiB) | One EPUB element, including XML metadata |
 | `MAX_EPUB_ENTRIES` | 10000 | EPUB ZIP entry count |
+| `MAX_EPUB_XML_DEPTH` | 64 | Maximum nesting depth in container/OPF XML metadata |
+| `MAX_EPUB_XML_ELEMENTS` | 10000 | Maximum elements in each metadata XML document |
 | `MAX_RUNNING_JOBS` | 2 | Running WebUI pipelines, including cache waits and compilation |
 | `MAX_QUEUED_JOBS` | 2 | Additional admitted WebUI requests/jobs; zero is allowed |
 
 Restart the WebUI after changing configuration. Invalid limits prevent startup.
 The parser also limits multipart uploads to 2 files and forms to 32 fields.
-When all running/queued slots are occupied, new generation requests receive
+Generation/resume requests require a valid session **before** reading the body,
+checking storage or reserving capacity. Anonymous requests receive `401` even
+when the queue is full. Sessions are checked again after upload, so expiry or
+logout during upload prevents submission. Other request bodies use the smaller
+`MAX_JSON_REQUEST_BYTES` budget before JSON/form parsing. Login usernames are
+limited to 256 characters, passwords to 1024, and translation model IDs to 100.
+The password length bound applies to both login and password changes; existing
+usernames/passwords beyond these bounds require operator-assisted replacement.
+
+Slow bodies receive `408` when the total or idle timeout expires. Upload spools
+are closed and reserved slots released. These deadlines apply only to body
+reception, not queued/running generation or SSE streams. When all running/queued
+slots are occupied, new authenticated generation requests receive
 HTTP `429` with `Retry-After: 5`, before reading their body. Admission includes
 uploads and preflight, so concurrent preflight work is bounded too. Accepted jobs
 may remain `Pending` while waiting for a worker. Capacity is released after work,
@@ -481,10 +580,22 @@ in-process execution queue; restart requires explicit resume from saved inputs.
 The concurrency budget applies to this single WebUI process. Independent CLI/TUI
 processes do not share that worker budget, but their input parsing uses the same
 file/text/EPUB limits. EPUB metadata and actual decompressed reads are checked;
-repeated spine reads also consume the decompression budget. MOBI output size/text
-are checked after extraction; the external MOBI library's extraction phase is
-not sandboxed or given an unpacking quota by this change. Configure reverse-proxy
+repeated spine reads also consume the decompression budget. WebUI rejects MOBI
+uploads and resumes with `415` before extraction or paid work; convert them to
+EPUB/TXT. CLI/TUI still accept trusted local MOBI files. That extractor runs in
+the application process without hard unpacking quotas and must not be used for
+untrusted files. Configure reverse-proxy
 request-size and upload-timeout limits as well for network deployments.
+
+EPUB container/OPF XML rejects all DTD declarations before entity processing,
+using parser callbacks rather than a byte-pattern scan (including UTF-16).
+Metadata trees have the depth/element limits above. Standard HTML/XHTML chapter
+doctypes are still handled by HTMLParser without fetching DTDs or expanding
+custom XML entities. These application guards do not patch the native Expat
+library; keep the runtime's XML libraries updated as part of release maintenance.
+
+See [deployment security](docs/SECURITY_DEPLOYMENT.md) for LAN binding, HTTP/HTTPS
+cookie settings, trusted proxies and recording the exact deployed image.
 
 ### Restart recovery and explicit resume (WebUI)
 
@@ -547,19 +658,32 @@ WebUI, CLI and TUI compilation runs outside the event loop. Cancellation keeps
 WebUI/CLI/TUI cache locks and compiler workspaces until the compiler thread has stopped. The TUI remains
 responsive while compiling; Mistral chunk probing is asynchronous too.
 
-Voice denoising uses a private temporary file with a valid audio extension and
-never overwrites the user's original reference. Its processed bytes are reused
-for TTS requests; failure is logged with bounded FFmpeg stderr and falls back to
-the original reference. Cancellation propagates after child cleanup. The voice
-size limit also applies to local references and processed buffers.
+Voice references must have matching `.mp3`/`.wav` contents. The decoder is forced
+to MP3 or WAV with an explicit MP3/PCM codec allowlist and `file` protocol only;
+playlists, ADX/CAF and compressed WAV codecs are rejected. References normalize
+to mono 24 kHz s16 PCM WAV with denoising. Original files are preserved. A decode,
+duration or quota failure rejects the reference; no original-file fallback is
+sent to the provider. WebUI validates references before creating a task or paid
+translation/TTS work, then reprocesses the private original when generation runs.
 
-Reference-preprocessing version 2 and the processed-byte fingerprint distinguish
-filtered audio from fallback audio in the cache. Preset-voice cache identities
-remain unchanged. Previous cloned-voice cache entries are not reused and old
-cloned-voice resume snapshots are rejected as incompatible; resubmit those jobs
-to generate a consistent audiobook with the corrected preprocessing. This can
-incur new API charges. The portable [Windows/Linux smoke](docs/WINDOWS.md) covers process cleanup;
-a native Windows run remains required. Results recorded locally are Linux-only.
+Reference decoding uses a private temporary working directory and an environment
+without application keys/proxy settings. Async process stdout/stderr capture is
+limited to 64 KiB each; overflow kills and reaps the process. FFmpeg has a 16 MiB
+single-allocation guard, one codec/filter thread, a byte limit and a duration
+guard that rejects overlong audio rather than accepting truncation. Linux uses
+`prlimit` for a 512 MiB address-space limit, a CPU budget and a hard file-size
+limit; install util-linux for local Linux cloning. Absence of `prlimit` fails
+closed. Other platforms have the format/allocation/output/time guards, but the
+configured total-memory limit is Linux-only. Native Windows acceptance remains
+required. These measures do not isolate the filesystem or contain arbitrary
+decoder code execution; keep untrusted processing in a restricted service/container.
+
+Reference-preprocessing version **3** and the processed-byte fingerprint identify
+the normalized reference. Preset-voice cache identities remain unchanged. Older
+cloned-voice cache entries are retained but not reused, and older cloned-voice
+resume snapshots are rejected as incompatible; resubmit those jobs deliberately.
+This may incur API charges. No existing output is deleted or regenerated on
+startup. Cancellation propagates after child and temporary-directory cleanup.
 
 ### API retries and deadlines
 

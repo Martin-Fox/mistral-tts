@@ -2,9 +2,9 @@
 -r requirements.in
 
 # AnyIO supplies the pytest plugin used by @pytest.mark.anyio (no extra plugin package).
-anyio==4.13.0
+anyio==4.14.2
 pytest==9.0.3
 pytest-timeout==2.4.0
 ruff==0.15.16
 # Lock generator, isolated from runtime; use the same version when refreshing pins/hashes.
-uv==0.11.7
+uv==0.13.4

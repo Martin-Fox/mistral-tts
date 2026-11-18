@@ -5,10 +5,9 @@ import json
 import hashlib
 from types import SimpleNamespace
 import re
-import tempfile
 import math
 from src.core.process_runner import run_process_async, process_budget
-from src.core.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
+from src.core.ffmpeg_utils import get_ffprobe_path
 from pathlib import Path
 from typing import Optional
 from mistralai.client import Mistral
@@ -19,6 +18,7 @@ from src.core.config import get_translation_model, load_environment
 from src.core.cache_io import save_text_atomic, save_json_atomic
 from src.core.resource_limits import check_text, ResourceLimits, ResourceLimitExceeded
 from src.core.text_splitter import TextSplitter
+from src.core.voice_reference import prepare_reference
 from src.core.storage_retention import check_storage_budget
 
 load_environment()
@@ -102,35 +102,19 @@ class MistralTTSClient(BaseTTSClient):
     async def clone_voice(self, audio_path: Path) -> str:
         """
         Sets a reference voice sample for zero-shot cloning.
-        Denoises a temporary copy using FFmpeg's afftdn filter to improve zero-shot cloning quality.
+        Validates and normalizes MP3/PCM WAV with denoising; failures never fall back.
         """
+        self.voice_sample_path = None
+        self.voice_sample_bytes = None
+        self.voice_id = None
         if not audio_path.exists():
             raise FileNotFoundError(f"Voice sample not found at {audio_path}")
 
         logger.info(f"Setting reference voice from {audio_path}")
 
-        limit = ResourceLimits.from_env().max_voice_upload_bytes
-        if audio_path.stat().st_size > limit:
-            raise ResourceLimitExceeded("Voice sample exceeds MAX_VOICE_UPLOAD_BYTES")
-        self.voice_sample_bytes = None
-        with tempfile.TemporaryDirectory(prefix="booksmith-voice-") as directory:
-            temp_denoised = Path(directory) / ("denoised" + (audio_path.suffix or ".mp3"))
-            try:
-                await run_process_async([
-                    get_ffmpeg_path(), "-y", "-i", str(audio_path), "-af", "afftdn", str(temp_denoised)
-                ], timeout=process_budget())
-                if not temp_denoised.exists() or not 0 < temp_denoised.stat().st_size <= limit:
-                    raise RuntimeError("Denoised voice sample is empty or exceeds its size budget")
-                self.voice_sample_bytes = temp_denoised.read_bytes()
-                logger.info("Denoised reference voice without modifying the original sample.")
-            except Exception as error:
-                detail = getattr(error, 'stderr', None)
-                if isinstance(detail, bytes):
-                    detail = detail.decode('utf-8', errors='replace')[-2000:]
-                logger.warning("Denoising failed; using original reference: %s %s", error, detail or '')
-
+        self.voice_sample_bytes = await prepare_reference(audio_path)
         self.voice_sample_path = audio_path
-        self.voice_id = None
+        logger.info('Validated and normalized reference voice without modifying the original sample.')
         return str(audio_path)
 
     async def generate_audio(self, text: str, output_path: Path, retry_count: int = 3):
@@ -161,10 +145,7 @@ class MistralTTSClient(BaseTTSClient):
         elif self.voice_sample_path:
             audio_data = self.voice_sample_bytes
             if audio_data is None:
-                with open(self.voice_sample_path, "rb") as stream:
-                    audio_data = stream.read(ResourceLimits.from_env().max_voice_upload_bytes + 1)
-                if len(audio_data) > ResourceLimits.from_env().max_voice_upload_bytes:
-                    raise ResourceLimitExceeded("Voice sample exceeds MAX_VOICE_UPLOAD_BYTES")
+                raise ValueError('Reference audio has not passed validation; call clone_voice first')
             kwargs["ref_audio"] = base64.b64encode(audio_data).decode("utf-8")
 
         response = await call_api(lambda: self.client.audio.speech.complete_async(**kwargs), attempts=retry_count)

@@ -1,0 +1,95 @@
+{
+  "date_utc": "2026-11-18",
+  "scope": "Media guards and dependency refresh; no Docker build, push or deployment",
+  "docker_image_built": false,
+  "python": "3.11.2",
+  "sdk": "mistralai==2.4.9",
+  "voice_preprocess_version": 3,
+  "changes": {
+    "anyio": [
+      "4.13.0",
+      "4.14.2"
+    ],
+    "python-dotenv": [
+      "0.21.0",
+      "1.2.2"
+    ],
+    "uv": [
+      "0.11.7",
+      "0.13.4"
+    ]
+  },
+  "full_tests": {
+    "passed": 561,
+    "warnings": 4,
+    "elapsed_seconds": 63.53
+  },
+  "locks": {
+    "runtime": {
+      "sha256": "128c9b2c39a0277223e7ef3f2daaecd1c27027342ab589d40fcca4f4e5aa95d8",
+      "packages": 39,
+      "remaining_findings": [
+        {
+          "package": "opentelemetry-api",
+          "version": "1.39.1",
+          "id": "CVE-2026-114603",
+          "aliases": [
+            "GHSA-xcq7-p3pf-p88h"
+          ],
+          "fix_versions": [
+            "1.45.1"
+          ]
+        },
+        {
+          "package": "opentelemetry-api",
+          "version": "1.39.1",
+          "id": "CVE-2026-126360",
+          "aliases": [
+            "GHSA-mf5v-w3w3-f6cg"
+          ],
+          "fix_versions": [
+            "1.45.2"
+          ]
+        }
+      ],
+      "hash_install": "passed",
+      "pip_check_before_installer_cleanup": "passed"
+    },
+    "dev": {
+      "sha256": "510c9232fc5553e6888ef046436a28acfcb26f2a05377808679845d4a481ddb7",
+      "packages": 46,
+      "remaining_findings": [
+        {
+          "package": "opentelemetry-api",
+          "version": "1.39.1",
+          "id": "CVE-2026-114603",
+          "aliases": [
+            "GHSA-xcq7-p3pf-p88h"
+          ],
+          "fix_versions": [
+            "1.45.1"
+          ]
+        },
+        {
+          "package": "opentelemetry-api",
+          "version": "1.39.1",
+          "id": "CVE-2026-126360",
+          "aliases": [
+            "GHSA-mf5v-w3w3-f6cg"
+          ],
+          "fix_versions": [
+            "1.45.2"
+          ]
+        }
+      ],
+      "hash_install": "passed",
+      "pip_check_before_installer_cleanup": "passed"
+    }
+  },
+  "portable_smoke": {
+    "passed": 133,
+    "warnings": 3,
+    "elapsed_seconds": 22.7,
+    "docker_build": false
+  }
+}

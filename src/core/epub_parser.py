@@ -52,12 +52,38 @@ class HTMLTextExtractor(HTMLParser):
                 lines.append(line)
         return "\n\n".join(lines)
 
+class MetadataTreeBuilder(ET.TreeBuilder):
+    """Reject DTD before its subset/entities; bound the metadata tree shape."""
+    def __init__(self):
+        super().__init__()
+        self.limits = ResourceLimits.from_env()
+        self.depth = 0
+        self.elements = 0
+
+    def doctype(self, name, pubid, system):
+        raise ValueError('DTD/entities are not permitted in EPUB XML metadata')
+
+    def start(self, tag, attrs):
+        self.depth += 1
+        self.elements += 1
+        if self.depth > self.limits.max_epub_xml_depth:
+            raise ResourceLimitExceeded('EPUB metadata exceeds MAX_EPUB_XML_DEPTH')
+        if self.elements > self.limits.max_epub_xml_elements:
+            raise ResourceLimitExceeded('EPUB metadata exceeds MAX_EPUB_XML_ELEMENTS')
+        return super().start(tag, attrs)
+
+    def end(self, tag):
+        result = super().end(tag)
+        self.depth -= 1
+        return result
+
+
 def strip_namespaces(xml_content: bytes) -> str:
     """
     Strips XML namespaces and tag prefixes to simplify parsing.
     """
     try:
-        root = ET.fromstring(xml_content)
+        root = ET.fromstring(xml_content, parser=ET.XMLParser(target=MetadataTreeBuilder()))
     except (ET.ParseError, LookupError, UnicodeError) as error:
         raise ValueError("Invalid EPUB XML metadata or encoding") from error
     for element in root.iter():

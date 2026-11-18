@@ -10,7 +10,7 @@ from src.core.text_splitter import SPLITTER_VERSION
 
 
 # Bump whenever reference preprocessing changes the audio sent to the provider.
-VOICE_PREPROCESS_VERSION = 2
+VOICE_PREPROCESS_VERSION = 3
 
 
 def hash_sample_file(path: Path) -> str:

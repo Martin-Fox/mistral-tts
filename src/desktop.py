@@ -89,6 +89,7 @@ def run_app(host: str = "127.0.0.1", port: Optional[int] = None, open_browser_ta
         port=port,
         log_level="info",
         access_log=False,
+        proxy_headers=False,
     )
     server = uvicorn.Server(config)
     try:

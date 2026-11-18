@@ -1,0 +1,49 @@
+{
+  "date_utc": "2026-11-18",
+  "branch": "fix/web-request-security",
+  "base_revision": "676b62ec2e782cdf38ac8caad923726945ef2343",
+  "docker_image_built": false,
+  "published": false,
+  "deployed": false,
+  "paid_provider_requests": 0,
+  "full_tests": {
+    "passed": 645,
+    "warnings": 4,
+    "elapsed_seconds": 72.06
+  },
+  "new_security_cases": 84,
+  "portable_smoke": {
+    "passed": 217,
+    "warnings": 3,
+    "elapsed_seconds": 32.74
+  },
+  "ruff": "passed",
+  "javascript_syntax": "passed",
+  "browser": {
+    "browser": "143.0.7499.4",
+    "legacy_password_migration": "passed",
+    "reload_restriction": "passed",
+    "normal_login": "passed",
+    "strict_script_csp": "passed",
+    "same_site_cross_origin_form_with_session": "403",
+    "configuration_unchanged": true,
+    "page_errors": 0,
+    "paid_requests": 0
+  },
+  "source_sha256": {
+    "src/core/auth.py": "f644d16e511793a864d6f6a35c177c7554d72081bfb044d6f49d873130679094",
+    "src/core/epub_parser.py": "43e6484452950dcd91d6b1ef69c478473fd22fef1f8ec38681dfbbd02e122a5f",
+    "src/core/resource_limits.py": "6b2deaa7900e6d73d80b991d49450e2d60c635a5a1fefa4cddde96b6a826bf61",
+    "src/web.py": "96f55ade524d58cbbda5b18e385b4874a9693c63b5230b73a6840ff6851a8b6a",
+    "src/web_limits.py": "e1e7bd047637c29d6a044763949828828bc8b8e808fe2cc1f7191f7c96dba285",
+    "src/web_security.py": "3d281eaffb447609e97ed259540699bf8653b687e36cb9684ec434d43edff797",
+    "src/web/static/app.js": "f9efa8db4809d54340e004066c0c579c806e0e61d121d4c89747ddd37d8f2a7d",
+    "src/web/static/index.html": "d2bc623d2e3f9161bc2d004d54b86e863a4c5f4cfed25199a519a2b0322d3a97"
+  },
+  "remaining": [
+    "SDK/OpenTelemetry and FFmpeg/libxml2 updates",
+    "Full process filesystem/network containment and safe MOBI extraction",
+    "Windows release integrity and scheduled CVE scans in CI",
+    "Authorized future image build, smoke, scan and LAN acceptance"
+  ]
+}

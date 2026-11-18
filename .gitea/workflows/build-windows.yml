@@ -33,12 +33,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path bin
           $ffmpegZip = "ffmpeg.zip"
-          try {
-              Write-Host "Downloading FFmpeg from Gyan.dev..."
-              Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $ffmpegZip -TimeoutSec 120
-          } catch {
-              Write-Host "Fallback: Downloading FFmpeg from GitHub releases..."
-              Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile $ffmpegZip -TimeoutSec 120
+          $ffmpegSha256 = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
+          Invoke-WebRequest -Uri "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip" -OutFile $ffmpegZip -TimeoutSec 120
+          if ((Get-FileHash -Algorithm SHA256 $ffmpegZip).Hash.ToLowerInvariant() -ne $ffmpegSha256) {
+              throw "FFmpeg archive SHA256 mismatch"
           }
           Write-Host "Extracting FFmpeg archive..."
           Expand-Archive -Path $ffmpegZip -DestinationPath ffmpeg-extract -Force
@@ -46,6 +44,10 @@ jobs:
           $ffprobeExe = Get-ChildItem -Path ffmpeg-extract -Recurse -Filter "ffprobe.exe" | Select-Object -First 1
           Copy-Item $ffmpegExe.FullName -Destination bin\ffmpeg.exe -Force
           Copy-Item $ffprobeExe.FullName -Destination bin\ffprobe.exe -Force
+          & ".\bin\ffmpeg.exe" -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ".\bin\ffprobe.exe" -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Remove-Item -Recurse -Force ffmpeg-extract, $ffmpegZip
           Write-Host "Binaries placed in bin/:"
           Get-ChildItem bin\

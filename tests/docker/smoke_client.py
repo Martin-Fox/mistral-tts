@@ -21,7 +21,7 @@ def main():
     assert os.getuid() == 1000
     uid = next(line for line in Path('/proc/1/status').read_text().splitlines() if line.startswith('Uid:'))
     assert [int(value) for value in uid.split()[1:]] == [1000] * 4
-    with httpx.Client(base_url='http://127.0.0.1:8000', timeout=20, trust_env=False) as client:
+    with httpx.Client(headers={'X-Requested-With': 'Booksmith'}, base_url='http://127.0.0.1:8000', timeout=20, trust_env=False) as client:
         deadline = time.monotonic() + 25
         while True:
             try:

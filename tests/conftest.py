@@ -11,7 +11,7 @@ import pytest
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 APP_PREFIXES = ('MISTRAL_', 'OPENAI_', 'APP_', 'SESSION_', 'LOGIN_', 'API_',
-                'AUDIO_', 'MAX_', 'STORAGE_', 'CACHE_LOCK_', 'WEB_CONCURRENCY',
+                'AUDIO_', 'REQUEST_', 'MAX_', 'STORAGE_', 'CACHE_LOCK_', 'WEB_CONCURRENCY',
                 'INPUT_TEXT_ENCODING', 'BOOKSMITH_ENV_FILE')
 
 
@@ -82,6 +82,7 @@ def isolated_state(tmp_path_factory, monkeypatch, test_password_hash):
     sessions = web.active_sessions
     sessions.clear()
     monkeypatch.setattr(web, 'active_sessions', sessions)
+    monkeypatch.setattr(web, 'password_change_sessions', set())
     monkeypatch.setattr(web, 'login_limiter', web.LoginLimiter())
     monkeypatch.setattr(web, 'job_controller', web.JobController(2, 2))
     monkeypatch.setattr(web.app, 'dependency_overrides', {})
