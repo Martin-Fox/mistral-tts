@@ -50,6 +50,11 @@ See the [audit and remediation record](docs/audit/SECURITY_AUDIT_2026-11-18.md),
 [native dependency limits](docs/NATIVE_DEPENDENCIES.md) and
 [deployment guidance](docs/SECURITY_DEPLOYMENT.md).
 
+The published **linux/amd64** image passed **7 Docker smoke checks**. Its package
+scan found **0 Critical** and **0 Python findings**, with **96 remaining OS CVEs**
+(including 11 High); compiled FFmpeg also retains separately documented risks.
+See the [1.0.4 image verification and digest](docs/audit/RELEASE_1.0.4_2026-11-18.md).
+
 ## 🚀 Features
 
 - **Interactive WebUI:** A premium, responsive single-page web application featuring glassmorphism card layouts, real-time progress bar animations, drag-and-drop file uploaders, an in-browser console terminal streaming live server logs via Server-Sent Events (SSE), and a custom audio player for instant playback.
