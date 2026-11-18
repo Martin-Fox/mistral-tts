@@ -72,8 +72,8 @@ def test_unicode_login_and_password_change(tmp_path, monkeypatch):
     monkeypatch.setattr(web, 'APP_PASSWORD_HASH', hash_password('stare-hasło'))
     monkeypatch.setattr(web, 'active_sessions', {})
     web.login(web.LoginRequest(username='żółw', password='stare-hasło'), Response(), Request({'type': 'http', 'headers': []}))
-    web.change_password(web.ChangePasswordRequest(current_password='stare-hasło', new_password='nowe-hasło'))
-    web.login(web.LoginRequest(username='żółw', password='nowe-hasło'), Response(), Request({'type': 'http', 'headers': []}))
+    web.change_password(web.ChangePasswordRequest(current_password='stare-hasło', new_password='nowe-długie-hasło'))
+    web.login(web.LoginRequest(username='żółw', password='nowe-długie-hasło'), Response(), Request({'type': 'http', 'headers': []}))
     with pytest.raises(HTTPException) as error:
         web.login(web.LoginRequest(username='żółw', password='stare-hasło'), Response(), Request({'type': 'http', 'headers': []}))
     assert error.value.status_code == 401

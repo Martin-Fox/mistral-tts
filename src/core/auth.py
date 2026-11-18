@@ -10,6 +10,13 @@ import tempfile
 
 
 ITERATIONS = 600_000
+MIN_PASSWORD_LENGTH = 12
+MAX_PASSWORD_LENGTH = 1024
+
+
+def password_meets_policy(password: str) -> bool:
+    return (isinstance(password, str) and len(password.strip()) >= MIN_PASSWORD_LENGTH
+            and len(password) <= MAX_PASSWORD_LENGTH)
 
 
 def hash_password(password: str) -> str:
@@ -85,6 +92,8 @@ def load_credentials(path: Path, username: str, password: str) -> tuple[str, str
             "if it exists (it takes precedence)."
         )
     if encoded is None:
+        if not path.exists() and not password_meets_policy(password):
+            raise RuntimeError('Unsafe WebUI credentials: APP_PASSWORD must contain 12-1024 characters (at least 12 after trimming).')
         encoded = hash_password(password)
         if path.exists():
             save_credentials(path, username, encoded)

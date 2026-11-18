@@ -19,10 +19,12 @@ def main():
             shutil.copytree(REPOSITORY / name, checkout / name,
                             ignore=shutil.ignore_patterns('__pycache__', '.env', '.env.*'))
         shutil.copyfile(REPOSITORY / 'pytest.ini', checkout / 'pytest.ini')
+        (checkout / 'scripts').mkdir()
+        shutil.copyfile(REPOSITORY / 'scripts/build_ffmpeg.sh', checkout / 'scripts/build_ffmpeg.sh')
         environment = dict(os.environ)
         for name in list(environment):
             if name.startswith(('MISTRAL_', 'OPENAI_', 'APP_', 'SESSION_', 'LOGIN_',
-                                'API_', 'AUDIO_', 'MAX_', 'STORAGE_', 'CACHE_LOCK_',
+                                'API_', 'AUDIO_', 'REQUEST_', 'MAX_', 'STORAGE_', 'CACHE_LOCK_',
                                 'WEB_CONCURRENCY', 'INPUT_TEXT_ENCODING', 'BOOKSMITH_ENV_FILE')):
                 del environment[name]
         environment['BOOKSMITH_ENV_FILE'] = str(checkout / '.env')
@@ -35,6 +37,9 @@ def main():
             'tests/test_platform_smoke.py', 'tests/test_ffmpeg_utils.py',
             'tests/test_audio_publication.py',
             'tests/test_cache_io.py', 'tests/test_process_runner.py',
+            'tests/test_media_security.py',
+            'tests/test_web_security.py',
+            'tests/test_sdk_contract.py',
             'tests/test_storage_retention.py', 'tests/test_auth.py',
         ], cwd=checkout, env=environment, timeout=180).returncode
 

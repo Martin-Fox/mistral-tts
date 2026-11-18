@@ -25,6 +25,14 @@ Configure credentials as described in README before starting WebUI; the default
 password is intentionally refused. Use filesystem ACLs to restrict `.env` and
 `storage` to the service account. Do not put provider keys in test logs.
 
+Reference audio now requires MP3 or PCM WAV, is normalized without fallback and
+has duration/output/allocation/time guards. The hard address-space/CPU/file
+resource wrapper uses Linux prlimit; it is not provided by Windows. Native
+Windows resource containment (e.g. Job Objects) remains an acceptance item.
+WebUI MOBI upload/resume is disabled on every platform; CLI/TUI MOBI is for
+trusted local inputs only. Version-3 reference preprocessing invalidates older
+cloned-voice cache identities/resume specs, while retaining existing outputs.
+
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn src.web:app --host 127.0.0.1 --port 8000 --workers 1
 ```
@@ -39,6 +47,13 @@ To launch outside the checkout, use an absolute `PYTHONPATH` pointing to it and
 spaces need PowerShell quoting. No global path/storage migration is introduced.
 
 ## Local verification (no provider calls)
+
+Packaging now pins Gyan's FFmpeg **9.0.2** essentials archive and SHA-256, with no
+fallback to a moving `latest` build. The archive hash was downloaded and checked
+locally; its EXEs have not been executed here. The Windows package is a general
+GPLv3 multimedia build, not the Linux audio-only profile; embedded library
+versions (including libxml2), native process/resource handling and the final
+application still need native acceptance. See [Native dependencies](NATIVE_DEPENDENCIES.md).
 
 Use a development environment for the tests:
 

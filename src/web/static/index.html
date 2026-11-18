@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="/static/styles.css?v=2">
     
     <!-- Deferred Application Logic -->
-    <script src="/static/app.js?v=4" defer></script>
+    <script src="/static/app.js?v=5" defer></script>
 </head>
 <body>
     <!-- Premium Login Overlay (Session Cookie Auth) -->
@@ -28,11 +28,11 @@
             <form id="login-form" method="POST" novalidate>
                 <div class="form-group">
                     <label for="login-username" class="field-label">Username</label>
-                    <input type="text" id="login-username" name="username" required placeholder="Enter username" autocomplete="username">
+                    <input type="text" id="login-username" name="username" required maxlength="256" placeholder="Enter username" autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="login-password" class="field-label">Password</label>
-                    <input type="password" id="login-password" name="password" required placeholder="Enter password" autocomplete="current-password">
+                    <input type="password" id="login-password" name="password" required maxlength="1024" placeholder="Enter password" autocomplete="current-password">
                 </div>
                 <button type="submit" id="login-submit-btn" class="primary-submit-btn">
                     <span class="submit-btn-text">Sign In</span>
@@ -150,7 +150,7 @@
                         
                         <!-- Drag-and-drop File Upload Zone -->
                         <div id="text-dropzone" class="dropzone">
-                            <input type="file" id="text-file" name="text_file" accept=".txt,.srt,.epub,.mobi">
+                            <input type="file" id="text-file" name="text_file" accept=".txt,.srt,.epub">
                             <div class="dropzone-info">
                                 <svg class="upload-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="16 16 12 12 8 16"></polyline>
@@ -158,7 +158,7 @@
                                     <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path>
                                     <polyline points="16 16 12 12 8 16"></polyline>
                                 </svg>
-                                <p class="dropzone-text">Drag & drop your <span class="highlight">.txt</span>, <span class="highlight">.srt</span>, <span class="highlight">.epub</span>, or <span class="highlight">.mobi</span> file, or <span class="browse-link">browse</span></p>
+                                <p class="dropzone-text">Drag & drop your <span class="highlight">.txt</span>, <span class="highlight">.srt</span>, or <span class="highlight">.epub</span> file, or <span class="browse-link">browse</span></p>
                                 <span class="selected-file-name" id="text-file-name">No file selected</span>
                             </div>
                         </div>
@@ -250,7 +250,7 @@
                                         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
                                         <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
                                     </svg>
-                                    <p class="dropzone-text">Upload reference voice sample (<span class="highlight">3-10s</span>, .mp3/.wav)</p>
+                                    <p class="dropzone-text">Upload reference voice sample (<span class="highlight">3-10s recommended, 30s maximum by default</span>, MP3/PCM WAV)</p>
                                     <span class="selected-file-name" id="voice-file-name">No audio selected</span>
                                 </div>
                             </div>
@@ -422,15 +422,15 @@
                     <form id="password-form" method="POST" novalidate>
                         <div class="form-group">
                             <label for="current-password" class="field-label">Current Password</label>
-                            <input type="password" id="current-password" name="current_password" required placeholder="Enter current password" autocomplete="current-password">
+                            <input type="password" id="current-password" name="current_password" required maxlength="1024" placeholder="Enter current password" autocomplete="current-password">
                         </div>
                         <div class="form-group">
                             <label for="new-password" class="field-label">New Password</label>
-                            <input type="password" id="new-password" name="new_password" required placeholder="Enter new password" autocomplete="new-password">
+                            <input type="password" id="new-password" name="new_password" required minlength="12" maxlength="1024" placeholder="Use a phrase of at least 12 characters" autocomplete="new-password">
                         </div>
                         <div class="form-group">
                             <label for="confirm-password" class="field-label">Confirm New Password</label>
-                            <input type="password" id="confirm-password" name="confirm_password" required placeholder="Confirm new password" autocomplete="new-password">
+                            <input type="password" id="confirm-password" name="confirm_password" required minlength="12" maxlength="1024" placeholder="Confirm new password" autocomplete="new-password">
                         </div>
                         <button type="submit" id="update-password-btn" class="primary-submit-btn">
                             <span class="submit-btn-text">Update Password</span>

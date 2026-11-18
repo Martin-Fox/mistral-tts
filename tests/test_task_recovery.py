@@ -91,7 +91,8 @@ def recovery(tmp_path, monkeypatch):
     monkeypatch.setattr(web.global_log_handler, 'database', db)
     monkeypatch.setattr(web, 'job_controller', web.JobController(2, 2))
     monkeypatch.setitem(web.app.dependency_overrides, web.verify_session, lambda: 'session')
-    return db, TestClient(web.app)
+    web.active_sessions['session'] = time.monotonic() + 3600
+    return db, TestClient(web.app, headers={'X-Requested-With': 'Booksmith'}, cookies={'session_id': 'session'})
 
 
 def test_resume_quota_recheck_does_not_claim_or_run_task(recovery, monkeypatch):

@@ -74,6 +74,14 @@ bypass in the actual deployment. Offline ASGI tests do not validate certificates
 or external proxy configuration. Use a local synthetic workload for this check;
 a real provider generation is a separately authorized paid operation.
 
+Docker's default command and the desktop launcher disable forwarded-header trust.
+When deploying Docker behind a proxy, explicitly override its command with
+`uvicorn src.web:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
+--forwarded-allow-ips=ACTUAL_PROXY_SOURCE_IP`. The trusted IP must be the source
+seen inside the container, which may be the Docker bridge gateway for a host
+proxy; do not assume that it is loopback. See [deployment security](SECURITY_DEPLOYMENT.md)
+for LAN-only use, body deadlines, image identity and acceptance checks.
+
 ## Restart and resume
 
 1. Keep the same complete storage root and start the chosen application version.
@@ -249,11 +257,35 @@ reconciliation and account for possible repeated provider requests.
 Persisted `storage/auth.json` takes precedence over `APP_USERNAME`/`APP_PASSWORD`.
 For a lost password, damaged file or rejected default password, stop WebUI, move
 that file to a private location outside managed storage, configure a unique
-non-empty `APP_PASSWORD` and non-empty username, then restart. Never replace
+12-1024-character `APP_PASSWORD` (at least 12 after trimming) and non-empty username,
+then restart. Never replace
 `password_hash` with plaintext or print the old file. Legacy backups may contain
 plaintext credentials. Environment credentials are hashed in memory; changing
 the password through WebUI creates a new persisted auth file. A successful change
 revokes all sessions; failed writes leave existing sessions intact.
+
+An existing persisted short password allows a restricted login for changing it,
+even after legacy plaintext migration. It does not permit generation, resume or
+data/config reads. The UI opens Security Settings automatically; sign in again
+after a successful change. If there is no auth file and credentials come from
+the environment, set a sufficiently long `APP_PASSWORD` **before** upgrading or
+startup will be refused. Updating only the environment does not override a
+persisted auth file.
+
+## Origin checks and browser headers
+
+The frontend supplies `X-Requested-With: Booksmith` automatically. Non-browser
+HTTP integrations must include it on writes when omitting Origin. Matching
+same-origin browser requests are accepted; foreign/opaque origins return `403`
+before body reception. Do not copy an Origin from another host or use wildcard
+CORS as a workaround. Behind HTTPS, preserve Host and configure trusted proxy
+scheme handling; raw `X-Forwarded-*` headers do not establish a trusted origin.
+
+CSP restricts scripts and API connections to the same origin, while preserving
+the UI's existing inline styles and Google Fonts. Frame protection, nosniff,
+no-referrer and no-store on root/API responses are included. HSTS belongs on
+the HTTPS terminator. Interactive Swagger/ReDoc are disabled; the OpenAPI schema
+is available at `/openapi.json` for clients honoring the write-header contract.
 
 ## Verification and remaining release gates
 

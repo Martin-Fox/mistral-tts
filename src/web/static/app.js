@@ -5,6 +5,12 @@
  */
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Explicit opt-in for write requests when the browser omits Origin.
+    function apiFetch(url, options = {}) {
+        const headers = new Headers(options.headers);
+        headers.set('X-Requested-With', 'Booksmith');
+        return fetch(url, { ...options, headers });
+    }
     // === DOM Element References ===
     const generatorForm = document.getElementById('generator-form');
     const apiKeyInput = document.getElementById('api-key');
@@ -246,7 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // === 3b. Translation Model Configuration ===
     async function loadConfig() {
         try {
-            const response = await fetch('/api/config', {
+            const response = await apiFetch('/api/config', {
                 credentials: 'same-origin'
             });
             if (response.status === 401) {
@@ -268,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
         translationModelSelect.addEventListener('change', async () => {
             const selectedModel = translationModelSelect.value;
             try {
-                const response = await fetch('/api/config', {
+                const response = await apiFetch('/api/config', {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {
@@ -379,7 +385,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const hasTextContent = textContentInput.value.trim().length > 0;
 
         if (!hasTextFile && !hasTextContent) {
-            alert('Please upload a file (.txt, .srt, .epub, .mobi) or paste text content manually.');
+            alert('Please upload a file (.txt, .srt, .epub) or paste text content manually.');
             textContentInput.focus();
             return;
         }
@@ -437,7 +443,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // --- Post Request & EventSource Connection ---
         try {
-            const response = await fetch('/api/generate', {
+            const response = await apiFetch('/api/generate', {
                 method: 'POST',
                 body: formData
             });
@@ -615,8 +621,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
-            if (newPassword.length < 4) {
-                showPasswordStatus('New password must be at least 4 characters long.', 'error');
+            if (Array.from(newPassword.trim()).length < 12 || Array.from(newPassword).length > 1024) {
+                showPasswordStatus('New password must contain 12-1024 characters (at least 12 after trimming).', 'error');
                 return;
             }
             
@@ -630,7 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showPasswordStatus('Updating password...', 'system');
             
             try {
-                const response = await fetch('/api/auth/change-password', {
+                const response = await apiFetch('/api/auth/change-password', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -706,15 +712,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check auth status on page load
     async function checkAuthStatus() {
         try {
-            const response = await fetch('/api/auth/status');
+            const response = await apiFetch('/api/auth/status');
             const data = await response.json();
             if (data.authenticated) {
                 if (loginOverlay) loginOverlay.classList.add('hidden');
-                loadConfig();
-                loadResumableTasks();
+                const requiresChange = Boolean(data.requires_password_change);
+                generatorForm.inert = requiresChange;
+                if (toggleSettingsBtn) toggleSettingsBtn.disabled = requiresChange;
+                if (requiresChange) {
+                    clearStoredApiKeys();
+                    clearApiKeyInputs();
+                    if (eventSource) eventSource.close();
+                    if (settingsCard) settingsCard.classList.remove('hidden');
+                    resumePanel.classList.add('hidden');
+                    showPasswordStatus('Change your old password to a phrase of at least 12 characters to continue.', 'system');
+                    currentPasswordInput.focus();
+                } else {
+                    loadConfig();
+                    loadResumableTasks();
+                }
             } else {
+                generatorForm.inert = true;
+                if (toggleSettingsBtn) toggleSettingsBtn.disabled = false;
+                if (settingsCard) settingsCard.classList.add('hidden');
+                resumePanel.classList.add('hidden');
                 clearStoredApiKeys();
                 clearApiKeyInputs();
+                passwordForm.reset();
                 if (loginOverlay) loginOverlay.classList.remove('hidden');
             }
         } catch (error) {
@@ -740,7 +764,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showLoginStatus('Signing in...', 'system');
             
             try {
-                const response = await fetch('/api/auth/login', {
+                const response = await apiFetch('/api/auth/login', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -751,11 +775,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.ok) {
                     showLoginStatus('Login successful.', 'success');
                     loginForm.reset();
-                    loadConfig();
-                    loadResumableTasks();
-                    setTimeout(() => {
-                        if (loginOverlay) loginOverlay.classList.add('hidden');
-                    }, 500);
+                    await checkAuthStatus();
                 } else {
                     const data = await response.json();
                     const errMsg = data.detail || 'Incorrect username or password.';
@@ -774,12 +794,13 @@ document.addEventListener('DOMContentLoaded', () => {
         logoutBtn.addEventListener('click', async () => {
             if (confirm('Are you sure you want to log out?')) {
                 try {
-                    await fetch('/api/auth/logout', { method: 'POST' });
+                    await apiFetch('/api/auth/logout', { method: 'POST' });
                 } catch (error) {
                     console.error('Error during logout request:', error);
                 } finally {
                     clearStoredApiKeys();
                     clearApiKeyInputs();
+                    passwordForm.reset();
                     // Show login overlay again immediately and reset form
                     if (loginOverlay) loginOverlay.classList.remove('hidden');
                     if (settingsCard) settingsCard.classList.add('hidden');
@@ -803,7 +824,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadResumableTasks() {
         try {
-            const response = await fetch('/api/tasks');
+            const response = await apiFetch('/api/tasks');
             if (!response.ok) return;
             const data = await response.json();
             resumeList.replaceChildren();
@@ -818,7 +839,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const form = new FormData();
                         form.set('api_key', apiKeyInput.value.trim());
                         form.set('openai_key', openaiKeyInput ? openaiKeyInput.value.trim() : '');
-                        const resumed = await fetch(`/api/resume/${encodeURIComponent(task.id)}`, {
+                        const resumed = await apiFetch(`/api/resume/${encodeURIComponent(task.id)}`, {
                             method: 'POST', body: form
                         });
                         if (!resumed.ok) {
@@ -849,5 +870,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Run auth status check and load configuration on initialization
     checkAuthStatus();
-    loadConfig();
 });
