@@ -1,5 +1,7 @@
 # Windows source distribution and acceptance
 
+[Documentation](README.md) · [Project overview](../README.md)
+
 The current P22 target is **CPython 3.11 x64 + FFmpeg/ffprobe**, running from
 source with `PYTHONUTF8=1`. PR #28 added `desktop.py`, `src/desktop.py`, `mistral-tts.spec` and a separate
 `build-windows.yml` workflow. These provide the packaging implementation, not
@@ -21,7 +23,8 @@ ffmpeg -version
 ffprobe -version
 ```
 
-Configure credentials as described in README before starting WebUI; the default
+Configure credentials as described in [Installation and usage](USAGE.md#setup)
+before starting WebUI; the default
 password is intentionally refused. Use filesystem ACLs to restrict `.env` and
 `storage` to the service account. Do not put provider keys in test logs.
 

@@ -1,5 +1,7 @@
 # Dependency management
 
+[Documentation](README.md) · [Project overview](../README.md)
+
 The validated baseline is CPython 3.11 on Linux, matching the Docker Python minor
 version. The locks use platform markers and hashes for other distributions, but
 universal resolution does not replace native Windows/macOS or other Python-minor

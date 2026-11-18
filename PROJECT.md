@@ -73,6 +73,8 @@ mistral-tts/
 │   ├── auth.json              # Optional persisted password hash (legacy files migrate)
 │   ├── state.db               # SQLite database for persistent task tracking
 │   └── translations/          # Destination for translated source documents
+├── docs/                      # User guides, technical references and dated audit evidence
+│   └── README.md              # Documentation index and maintenance conventions
 ├── tests/                     # Automated test suites for core modules & WebUI
 │   ├── test_audio_compiler.py
 │   ├── test_cli_integration.py
@@ -133,17 +135,6 @@ mistral-tts/
 
 ## Roadmap
 
-- [x] **Integrated Translation:** Direct translation from Language A to Language B using Mistral models before TTS.
-- [x] **Interactive WebUI:** Responsive web application to configure runs, preview voices, and monitor generation.
-- [x] **Docker Containerization:** Bundling FFmpeg and Python dependencies for zero-setup deployments.
-- [x] **Session Authentication:** One shared account with expiring session cookies; multiple accounts remain planned.
-- [x] **EPUB & MOBI Support:** Direct ingestion of EPUB and unencrypted MOBI ebooks.
-- [x] **OpenAI TTS Integration:** Support for OpenAI TTS voices alongside Mistral Voxtral.
-- [x] **Persistent Task State Management:** SQLite-backed task state storage.
-- [x] **Configurable Translation Models:** Dynamic switching and persistence of translation models.
-- [ ] **OpenID Connect (OIDC) Login:** Integrate authentication based on OpenID Connect (OIDC).
-- [ ] **Multi-User Login:** Support multiple user accounts and personalized histories.
-- [x] **Audio Truncation Safeguard & Duration Verification:** Enforce end-to-end duration verification and trailing silence padding.
-- [x] **Standalone Windows Packaging (PyInstaller + FFmpeg bundle):** Build specification and Gitea workflow are implemented; native artifact verification remains an open release gate.
-- [ ] **WebUI About Modal & Current Version Display:** Add a menu item / modal for "About" that displays application metadata, current version (e.g. 1.0.2), license, and project links.
-- [ ] **WebUI Help / Quick Guide:** Interactive help or documentation drawer/modal explaining parameters (chunking, temperature, voices, engines, loudnorm) and troubleshooting tips.
+See [Roadmap](docs/ROADMAP.md) for implemented capabilities and planned work.
+[Documentation](docs/README.md) maps user guides, technical references and dated
+verification evidence; keep the root README focused on onboarding.

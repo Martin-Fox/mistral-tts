@@ -1,5 +1,7 @@
 # Operations: deployment, recovery and upgrades
 
+[Documentation](README.md) · [Project overview](../README.md)
+
 This describes the current source tree, not a guarantee about an existing
 registry image. Build from the intended checkout and record its exact revision
 and local changes, or record the immutable image ID/digest used for deployment.
@@ -123,7 +125,7 @@ submission from original inputs. Preserve the old storage for inspection.
 
 ## Resource limits and retention
 
-The [README limit tables](../README.md#resource-limits-and-generation-admission)
+The [Processing limit tables](PROCESSING.md#resource-limits-and-generation-admission)
 list defaults and scopes. Input budgets, the WebUI queue, per-operation API retry
 budgets and per-process FFmpeg deadlines are separate controls. The two running
 plus two queued WebUI defaults do not limit independent CLI/TUI processes.
@@ -242,7 +244,8 @@ PBKDF2 hashes; damaged credentials stop startup without an environment fallback.
 
 There is no automatic migration from old unversioned/flat TUI audio cache to v2.
 Segmentation version 2 and corrected reference preprocessing invalidate older
-identities/snapshots as documented in README. Do not rename cache directories or
+identities/snapshots as documented in [Storage](STORAGE.md#shared-cache-contract-and-tui-migration)
+and [reference preprocessing](PROCESSING.md#ffmpegffprobe-budgets-and-voice-preprocessing). Do not rename cache directories or
 edit snapshot version/hash fields to bypass checks. Completed outputs remain
 files, but retention may remove them if enabled. Resubmission can incur API costs.
 

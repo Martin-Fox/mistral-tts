@@ -1,5 +1,7 @@
 # Tests and CI
 
+[Documentation](README.md) · [Project overview](../README.md)
+
 Use CPython 3.11 and the locked development environment. FFmpeg and ffprobe must
 be on `PATH`; real local audio publication/probing tests use both executables.
 Provider calls use fake clients or transports. No API credentials are required.
