@@ -11,7 +11,7 @@ from src.core.cache_identity import get_cache_key
 
 pytestmark = pytest.mark.usefixtures('authenticated_web')
 
-client = TestClient(app)
+client = TestClient(app, headers={'X-Requested-With': 'Booksmith'})
 
 
 def test_read_root():
@@ -95,7 +95,7 @@ def test_generate_success(mock_run_pipeline):
         "voice_preset": "en_paul_neutral",
         "output_filename": "audiobook.mp3"
     }
-    response = client.post("/api/generate", data=data)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
     assert response.status_code == 200
     json_data = response.json()
     assert "task_id" in json_data
@@ -141,7 +141,7 @@ def test_generate_missing_text():
         "voice_preset": "en_paul_neutral",
         "output_filename": "audiobook.mp3"
     }
-    response = client.post("/api/generate", data=data)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
     assert response.status_code == 400
     assert "Either text_file or text_content must be provided." in response.json()["detail"]
 
@@ -154,7 +154,7 @@ def test_generate_missing_api_key(mock_getenv):
         "voice_preset": "en_paul_neutral",
         "output_filename": "audiobook.mp3"
     }
-    response = client.post("/api/generate", data=data)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
     assert response.status_code == 400
     assert "API key is required." in response.json()["detail"]
 
@@ -313,7 +313,7 @@ def test_change_password_too_short():
             }
             response = client.post("/api/auth/change-password", json=payload)
             assert response.status_code == 400
-            assert "New password must be at least 4 characters long" in response.json()["detail"]
+            assert "New password must contain 12-1024 characters" in response.json()["detail"]
         finally:
             app.dependency_overrides[verify_session] = lambda: "session-id"
 
@@ -330,7 +330,7 @@ def test_generate_openai_voice_cloning_error():
     files = {
         "voice_file": ("voice.wav", b"fake-audio")
     }
-    response = client.post("/api/generate", data=data, files=files)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data, files=files)
     assert response.status_code == 400
     assert "does not support voice cloning" in response.json()["detail"]
 
@@ -345,7 +345,7 @@ def test_generate_openai_missing_key_error(mock_getenv):
         "output_filename": "audiobook.mp3",
         "openai_key": "   "
     }
-    response = client.post("/api/generate", data=data)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
     assert response.status_code == 400
     assert "OpenAI API key is required" in response.json()["detail"]
 
@@ -381,7 +381,7 @@ async def test_background_purger(tmp_path):
 def test_config_endpoints_require_session():
     """Assert that accessing /api/config without a valid session cookie returns 401."""
     app.dependency_overrides.clear()
-    unauthed_client = TestClient(app)
+    unauthed_client = TestClient(app, headers={'X-Requested-With': 'Booksmith'})
     try:
         get_res = unauthed_client.get("/api/config")
         assert get_res.status_code == 401
@@ -400,7 +400,7 @@ def test_config_endpoints_with_session_cookie():
     app.dependency_overrides.clear()
     valid_sid = "test-session-config-123"
     active_sessions[valid_sid] = time.monotonic() + 3600
-    session_client = TestClient(app)
+    session_client = TestClient(app, headers={'X-Requested-With': 'Booksmith'})
     session_client.cookies.set("session_id", valid_sid)
     try:
         get_res = session_client.get("/api/config")
@@ -520,7 +520,7 @@ def test_generate_with_translation_model(mock_run_pipeline):
         "target_lang": "Polish",
         "translation_model": "mistral-large-latest"
     }
-    response = client.post("/api/generate", data=data)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
     assert response.status_code == 200
     task_id = response.json()["task_id"]
 
@@ -678,7 +678,7 @@ def test_generate_invalid_source_lang():
         "source_lang": "invalid!@#$",
         "target_lang": "Spanish"
     }
-    response = client.post("/api/generate", data=data)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
     assert response.status_code == 400
     assert "Invalid source_lang" in response.json()["detail"]
 
@@ -691,7 +691,7 @@ def test_generate_invalid_target_lang():
         "source_lang": "English",
         "target_lang": "../../etc/passwd"
     }
-    response = client.post("/api/generate", data=data)
+    response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
     assert response.status_code == 400
     assert "Invalid target_lang" in response.json()["detail"]
 
@@ -705,7 +705,7 @@ def test_generate_valid_languages(monkeypatch):
             "source_lang": "English",
             "target_lang": "Latin American Spanish"
         }
-        response = client.post("/api/generate", data=data)
+        response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
         assert response.status_code == 200
         assert "task_id" in response.json()
 
@@ -737,7 +737,7 @@ def test_generate_malformed_and_malicious_languages_rejected(invalid_lang):
         "source_lang": invalid_lang,
         "target_lang": "Spanish"
     }
-    res_source = client.post("/api/generate", data=data_source)
+    res_source = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data_source)
     assert res_source.status_code == 400
     assert "Invalid source_lang" in res_source.json()["detail"]
 
@@ -748,7 +748,7 @@ def test_generate_malformed_and_malicious_languages_rejected(invalid_lang):
         "source_lang": "English",
         "target_lang": invalid_lang
     }
-    res_target = client.post("/api/generate", data=data_target)
+    res_target = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data_target)
     assert res_target.status_code == 400
     assert "Invalid target_lang" in res_target.json()["detail"]
 
@@ -771,7 +771,7 @@ def test_generate_valid_language_variations(valid_lang):
             "source_lang": valid_lang,
             "target_lang": valid_lang
         }
-        response = client.post("/api/generate", data=data)
+        response = client.post("/api/generate", headers={"Cookie": "session_id=session-id"}, data=data)
         assert response.status_code == 200
         assert "task_id" in response.json()
 

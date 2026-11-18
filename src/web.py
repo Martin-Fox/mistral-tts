@@ -18,7 +18,7 @@ import secrets
 from fastapi import APIRouter, FastAPI, BackgroundTasks, File, Form, UploadFile, HTTPException, Query, Depends, status, Request, Response, Cookie
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, field_validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
 from src.core.text_splitter import TextSplitter
 from src.api.mistral_client import MistralTTSClient
@@ -28,11 +28,13 @@ from src.web_limits import JobController, GenerationRequestLimits, GenerationRou
 from src.core.audio_compiler import AudioCompiler
 from src.core.cache_io import run_blocking_until_done
 from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
-from src.core.auth import hash_password, verify_password, load_credentials, save_credentials
+from src.core.auth import hash_password, verify_password, load_credentials, save_credentials, password_meets_policy
+from src.web_security import WebSecurity
 from src.core.login_limiter import LoginLimiter
 from src.core.task_store import save_job, load_job, task_directory, load_translation, save_translation, validate_task_id, save_cache_reference
 from src.core.storage_retention import StoragePolicy, StorageBudgetExceeded, check_storage_budget, sweep_storage
 from src.core.process_runner import process_budget
+from src.core.voice_reference import prepare_reference
 from src.api.retry import validate_retry_settings
 from src.core.task_db import TaskDatabase
 from src.core.config import get_translation_model, save_translation_model, load_environment
@@ -72,6 +74,7 @@ APP_PASSWORD_HASH = None
 
 # Process-local sessions: run the WebUI with one worker.
 active_sessions: dict[str, float] = {}
+password_change_sessions: set[str] = set()
 auth_lock = threading.RLock()
 login_limiter = LoginLimiter()
 SESSION_TTL_SECONDS = 28800
@@ -100,9 +103,10 @@ def session_is_valid(session_id: Optional[str]) -> bool:
         now = time.monotonic()
         for expired in [sid for sid, expiry in active_sessions.items() if expiry <= now]:
             active_sessions.pop(expired, None)
+            password_change_sessions.discard(expired)
         return bool(session_id and session_id in active_sessions)
 
-def verify_session(session_id: Optional[str] = Cookie(None)):
+def verify_login_session(session_id: Optional[str] = Cookie(None)):
     """
     Validates the session cookie.
     Designed as a pluggable dependency to allow easy transition to OIDC/Pocket-ID in the future.
@@ -114,13 +118,23 @@ def verify_session(session_id: Optional[str] = Cookie(None)):
         )
     return session_id
 
+
+def verify_session(session_id: Optional[str] = Cookie(None)):
+    with auth_lock:
+        token = verify_login_session(session_id)
+        if token in password_change_sessions:
+            raise HTTPException(status_code=403, detail='Password change required before using the application')
+        return token
+
 app = FastAPI(
-    title="Mistral TTS Booksmith API"
+    title="Mistral TTS Booksmith API", docs_url=None, redoc_url=None
 )
 
 job_controller = JobController(running=2, queued=2)
 app.add_middleware(GenerationRequestLimits, controller=lambda: job_controller,
-                   storage_check=lambda: check_storage_budget())
+                   storage_check=lambda: check_storage_budget(),
+                   authenticated=lambda scope: verify_session(Request(scope).cookies.get('session_id')))
+app.add_middleware(WebSecurity)
 
 
 async def read_upload_bounded(upload: UploadFile, limit: int) -> bytes:
@@ -132,6 +146,11 @@ async def read_upload_bounded(upload: UploadFile, limit: int) -> bytes:
         content.extend(chunk)
         if len(content) > limit:
             raise HTTPException(status_code=413, detail="Uploaded file exceeds its size limit")
+
+
+def check_web_document(filename):
+    if Path(filename or '').suffix.lower() == '.mobi':
+        raise HTTPException(status_code=415, detail='MOBI uploads/resume are disabled in WebUI; convert to EPUB or TXT.')
 
 
 # Mount static files directory
@@ -317,11 +336,11 @@ async def run_generation_pipeline(
                 pass
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(max_length=1024)
+    new_password: str = Field(max_length=1024)
 
 @app.post("/api/auth/change-password")
-def change_password(request: ChangePasswordRequest, session: str = Depends(verify_session)):
+def change_password(request: ChangePasswordRequest, session: str = Depends(verify_login_session)):
     # Serialize password verification/publication against concurrent logins.
     with auth_lock:
         return _change_password(request)
@@ -342,10 +361,10 @@ def _change_password(request: ChangePasswordRequest):
         )
     
     # Validate new password
-    if not request.new_password or len(request.new_password.strip()) < 4 or request.new_password.strip() == "admin":
+    if not password_meets_policy(request.new_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be at least 4 characters long and must not be admin"
+            detail="New password must contain 12-1024 characters (at least 12 after trimming)"
         )
         
     # Persist the new credentials
@@ -356,6 +375,7 @@ def _change_password(request: ChangePasswordRequest):
         # Update in-memory
         APP_PASSWORD_HASH = new_hash
         active_sessions.clear()
+        password_change_sessions.clear()
         logger.info(f"Password successfully changed for user: {APP_USERNAME}")
         return {"message": "Password updated successfully. Please log in with your new credentials."}
     except Exception as e:
@@ -366,8 +386,8 @@ def _change_password(request: ChangePasswordRequest):
         )
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=256)
+    password: str = Field(max_length=1024)
 
 @app.post("/api/auth/login")
 def login(request: LoginRequest, response: Response, http_request: Request):
@@ -398,6 +418,9 @@ def _login(request: LoginRequest, response: Response):
     session_id = str(uuid.uuid4())
     session_is_valid(None)  # Evict expired entries before adding a session.
     active_sessions[session_id] = time.monotonic() + SESSION_TTL_SECONDS
+    requires_change = not password_meets_policy(request.password)
+    if requires_change:
+        password_change_sessions.add(session_id)
     response.set_cookie(
         key="session_id",
         value=session_id,
@@ -406,7 +429,7 @@ def _login(request: LoginRequest, response: Response):
         secure=SESSION_COOKIE_SECURE,
         max_age=SESSION_TTL_SECONDS
     )
-    return {"message": "Login successful"}
+    return {"message": "Login successful", "requires_password_change": requires_change}
 
 @app.post("/api/auth/logout")
 def logout(request: Request, response: Response):
@@ -416,6 +439,7 @@ def logout(request: Request, response: Response):
     session_id = request.cookies.get("session_id")
     with auth_lock:
         active_sessions.pop(session_id, None)
+        password_change_sessions.discard(session_id)
     response.delete_cookie(key="session_id", httponly=True, samesite="lax", secure=SESSION_COOKIE_SECURE)
     return {"message": "Logged out successfully"}
 
@@ -426,11 +450,12 @@ def get_auth_status(request: Request):
     """
     session_id = request.cookies.get("session_id")
     if session_is_valid(session_id):
-        return {"authenticated": True, "username": APP_USERNAME}
+        return {"authenticated": True, "username": APP_USERNAME,
+                "requires_password_change": session_id in password_change_sessions}
     return {"authenticated": False}
 
 class ConfigUpdateRequest(BaseModel):
-    translation_model: str
+    translation_model: str = Field(max_length=100)
 
     @field_validator("translation_model", mode="before")
     @classmethod
@@ -655,6 +680,7 @@ async def generate_audiobook(
     # Read uploaded file contents in the request handler to prevent closed file descriptors in background task
     text_file_data = None
     if text_file:
+        check_web_document(text_file.filename)
         text_bytes = await read_upload_bounded(text_file, limits.max_text_upload_bytes)
         text_file_data = (text_file.filename, text_bytes)
 
@@ -676,6 +702,19 @@ async def generate_audiobook(
                 raise HTTPException(status_code=413, detail=str(error)) from None
             except (ValueError, zipfile.BadZipFile, ET.ParseError):
                 raise HTTPException(status_code=400, detail="Invalid input document") from None
+
+    # Reject unsupported/overlong audio before a task can submit translation or
+    # TTS work. Keep the original immutable snapshot for deterministic cache IDs.
+    if voice_file_data:
+        with tempfile.TemporaryDirectory(prefix='booksmith-voice-preflight-') as directory:
+            probe = Path(directory) / ('input' + Path(voice_file_data[0] or '').suffix)
+            probe.write_bytes(voice_file_data[1])
+            try:
+                await prepare_reference(probe)
+            except ResourceLimitExceeded as error:
+                raise HTTPException(status_code=413, detail=str(error)) from None
+            except (ValueError, TimeoutError):
+                raise HTTPException(status_code=400, detail='Invalid or unsupported voice reference') from None
 
 
     # Enqueue background execution task
@@ -738,6 +777,8 @@ async def resume_task(task_id: str, background_tasks: BackgroundTasks,
         arguments = load_job(task_id)
     except (OSError, ValueError, KeyError, TypeError):
         raise HTTPException(status_code=409, detail="Saved task inputs are missing, changed or incompatible") from None
+    if arguments['text_file_data']:
+        check_web_document(arguments['text_file_data'][0])
     mistral = (api_key or '').strip() or os.getenv('MISTRAL_API_KEY', '')
     openai = (openai_key or '').strip() or os.getenv('OPENAI_API_KEY', '')
     if (arguments['engine'] == 'mistral' or arguments['target_lang']) and not mistral:

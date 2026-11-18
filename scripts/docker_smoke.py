@@ -31,7 +31,9 @@ class DockerSmoke(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         context = Path(cls.temporary.name) / 'context'
         context.mkdir()
-        for name in ('Dockerfile', 'docker-entrypoint.sh', 'requirements.txt', '.dockerignore'):
+        for name in ('Dockerfile', 'docker-entrypoint.sh', 'requirements.txt', '.dockerignore',
+                     'scripts/build_ffmpeg.sh'):
+            (context / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, context / name)
         for name in ('src', 'tests'):
             shutil.copytree(ROOT / name, context / name,

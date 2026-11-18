@@ -109,7 +109,7 @@ def test_real_denoising_preserves_original_and_uses_processed_bytes(tmp_path, mo
         result = factory(**kwargs)
         directories.append(Path(result.name))
         return result
-    monkeypatch.setattr('src.api.mistral_client.tempfile.TemporaryDirectory', temporary)
+    monkeypatch.setattr('src.core.voice_reference.tempfile.TemporaryDirectory', temporary)
     client = MistralTTSClient('fake-key')
     async def run():
         await client.clone_voice(original)
@@ -126,17 +126,18 @@ def test_real_denoising_preserves_original_and_uses_processed_bytes(tmp_path, mo
     assert all(not path.exists() for path in directories)
 
 
-def test_denoising_error_reports_stderr_and_falls_back(tmp_path, monkeypatch, caplog):
+def test_denoising_error_rejects_reference_without_fallback(tmp_path, monkeypatch):
     original = tmp_path / 'voice.wav'
     make_audio(original)
     before = original.read_bytes()
-    monkeypatch.setattr('src.api.mistral_client.run_process_async', AsyncMock(
+    monkeypatch.setattr('src.core.voice_reference.run_process_async', AsyncMock(
         side_effect=subprocess.CalledProcessError(1, ['ffmpeg'], stderr=b'filter diagnostic')))
     client = MistralTTSClient('fake-key')
-    asyncio.run(client.clone_voice(original))
+    with pytest.raises(ValueError, match='could not be decoded'):
+        asyncio.run(client.clone_voice(original))
     assert original.read_bytes() == before
     assert client.voice_sample_bytes is None
-    assert 'filter diagnostic' in caplog.text
+    assert client.voice_sample_path is None
 
 
 def test_cancelling_threaded_processing_stops_child(tmp_path):
@@ -205,8 +206,8 @@ def test_cancelling_denoising_cleans_private_workspace(tmp_path, monkeypatch):
         directory = factory(**kwargs)
         directories.append(Path(directory.name))
         return directory
-    monkeypatch.setattr('src.api.mistral_client.tempfile.TemporaryDirectory', temporary)
-    monkeypatch.setattr('src.api.mistral_client.run_process_async',
+    monkeypatch.setattr('src.core.voice_reference.tempfile.TemporaryDirectory', temporary)
+    monkeypatch.setattr('src.core.voice_reference.run_process_async',
                         AsyncMock(side_effect=asyncio.CancelledError))
     client = MistralTTSClient('fake-key')
     with pytest.raises(asyncio.CancelledError):

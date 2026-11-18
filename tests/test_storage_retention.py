@@ -278,7 +278,7 @@ def test_full_storage_rejects_before_body_and_releases_admission(path):
     controller = JobController(1, 0)
     app, receive = AsyncMock(), AsyncMock()
     check = Mock(side_effect=StorageBudgetExceeded('Storage budget exceeded'))
-    middleware = GenerationRequestLimits(app, lambda: controller, storage_check=check)
+    middleware = GenerationRequestLimits(app, lambda: controller, storage_check=check, authenticated=lambda scope: True)
     sent = []
     async def send(message):
         sent.append(message)

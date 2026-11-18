@@ -1,5 +1,6 @@
 import asyncio
 import io
+import time
 import zipfile
 from unittest.mock import AsyncMock, Mock
 
@@ -21,7 +22,8 @@ def limited_web(monkeypatch):
     pipeline = AsyncMock()
     monkeypatch.setattr(web, 'run_generation_pipeline', pipeline)
     monkeypatch.setitem(web.app.dependency_overrides, web.verify_session, lambda: 'test-session')
-    return TestClient(web.app), pipeline
+    web.active_sessions['test-session'] = time.monotonic() + 3600
+    return TestClient(web.app, headers={'X-Requested-With': 'Booksmith'}, cookies={'session_id': 'test-session'}), pipeline
 
 
 @pytest.mark.parametrize('setting', ['MAX_REQUEST_BYTES', 'MAX_TEXT_CHARS', 'MAX_RUNNING_JOBS'])
@@ -117,7 +119,7 @@ def test_body_budget_includes_chunked_and_forged_lengths(monkeypatch, declared):
     monkeypatch.setenv('MAX_REQUEST_BYTES', '10')
     controller = JobController(1, 0)
     app = AsyncMock()
-    middleware = GenerationRequestLimits(app, controller=lambda: controller)
+    middleware = GenerationRequestLimits(app, controller=lambda: controller, authenticated=lambda scope: True)
     headers = [] if declared is None else [(b'content-length', declared)]
     scope = {'type': 'http', 'method': 'POST', 'path': '/api/generate', 'headers': headers}
     receive = AsyncMock(side_effect=[
@@ -140,7 +142,7 @@ def test_busy_capacity_returns_429_before_reading_body():
     controller = JobController(1, 1)
     assert controller.admission.acquire(False)
     assert controller.admission.acquire(False)
-    middleware = GenerationRequestLimits(AsyncMock(), controller=lambda: controller)
+    middleware = GenerationRequestLimits(AsyncMock(), controller=lambda: controller, authenticated=lambda scope: True)
     receive = AsyncMock()
     sent = []
     async def send(message):
@@ -198,7 +200,7 @@ def test_transport_admission_is_released_on_failure(outcome):
         if outcome == 'error':
             raise RuntimeError('simulated error')
         raise asyncio.CancelledError
-    middleware = GenerationRequestLimits(app, controller=lambda: controller)
+    middleware = GenerationRequestLimits(app, controller=lambda: controller, authenticated=lambda scope: True)
     receive = AsyncMock(return_value={
         'type': 'http.disconnect' if outcome == 'disconnect' else 'http.request',
         'body': b'', 'more_body': False,
@@ -226,7 +228,7 @@ def test_http_queue_is_bounded_and_capacity_is_reused(limited_web, monkeypatch):
             await finish.wait()
         pipeline.side_effect = work
         transport = httpx.ASGITransport(app=web.app)
-        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+        async with httpx.AsyncClient(transport=transport, base_url='http://test', headers={'X-Requested-With': 'Booksmith'}, cookies={'session_id': 'test-session'}) as client:
             payload = {'api_key': 'fake-key', 'text_content': 'text'}
             first = asyncio.create_task(client.post('/api/generate', data=payload))
             second = asyncio.create_task(client.post('/api/generate', data=payload))

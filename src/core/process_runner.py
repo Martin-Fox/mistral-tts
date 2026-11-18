@@ -6,6 +6,8 @@ import subprocess
 import time
 from contextvars import ContextVar
 
+from src.core.resource_limits import ResourceLimitExceeded
+
 process_cancellation = ContextVar('process_cancellation', default=None)
 
 
@@ -87,15 +89,40 @@ async def _stop(process, communication):
     await communication
 
 
-async def run_process_async(cmd, *, timeout):
+async def _communicate_bounded(process, limit):
+    """Drain both pipes, but kill on overflow instead of retaining unbounded logs."""
+    exceeded = False
+    async def read(stream):
+        nonlocal exceeded
+        data = bytearray()
+        while chunk := await stream.read(16384):
+            remaining = limit - len(data)
+            data.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                exceeded = True
+                if process.returncode is None:
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                # Keep draining after kill so process.wait() cannot deadlock.
+        return bytes(data)
+    stdout, stderr = await asyncio.gather(read(process.stdout), read(process.stderr))
+    await process.wait()
+    return stdout, stderr, exceeded
+
+
+async def run_process_async(cmd, *, timeout, env=None, cwd=None, max_output_bytes=65536):
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('Process timeout must be finite and positive')
+    if max_output_bytes <= 0:
+        raise ValueError('Process output limit must be positive')
     process = await asyncio.create_subprocess_exec(
         *cmd, stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    communication = asyncio.create_task(process.communicate())
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env, cwd=cwd)
+    communication = asyncio.create_task(_communicate_bounded(process, max_output_bytes))
     try:
-        stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), timeout)
+        stdout, stderr, exceeded = await asyncio.wait_for(asyncio.shield(communication), timeout)
     except (asyncio.TimeoutError, asyncio.CancelledError) as error:
         cleanup = asyncio.create_task(_stop(process, communication))
         # Repeated cancellation must not orphan the child or close staging early.
@@ -110,6 +137,8 @@ async def run_process_async(cmd, *, timeout):
             failure.stderr = communication.result()[1]
             raise failure from None
         raise
+    if exceeded:
+        raise ResourceLimitExceeded('Process output exceeded its diagnostic byte budget')
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
     return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
