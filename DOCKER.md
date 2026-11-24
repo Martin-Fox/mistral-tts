@@ -11,19 +11,20 @@ dependency graph, pins the Debian trixie base digest, explicitly upgrades zlib
 to a corrected minimum, and installs util-linux for decoder resource limits.
 Installers are removed after dependency validation; pip is unavailable at runtime.
 The versioned image for this security update is
-`marcinlis82/mistral-tts:1.0.4` (Linux amd64). See the
-[1.0.4 change notes](docs/RELEASE_NOTES.md#security-update--104) before upgrading.
+`marcinlis82/mistral-tts:1.0.5` (Linux amd64). See the
+[1.0.5 change notes](docs/RELEASE_NOTES.md#security-audit-remediation--105) before upgrading.
 
 ```bash
-docker pull marcinlis82/mistral-tts:1.0.4
+docker pull marcinlis82/mistral-tts:1.0.5
 mkdir -p storage
 ```
 
-See the [1.0.4 image checks, CVE scan and digest](docs/audit/RELEASE_1.0.4_2026-11-18.md).
+See the [1.0.5 image checks and digest](docs/audit/RELEASE_1.0.5_2026-11-24.md)
+(and the earlier [1.0.4 CVE scan](docs/audit/RELEASE_1.0.4_2026-11-18.md)).
 
 See [Operations](docs/OPERATIONS.md) for TLS, restart recovery, backup/restore and
 upgrade/rollback procedures. All examples below use the versioned image. To build from source, run
-`docker build -t marcinlis82/mistral-tts:1.0.4 .` in this checkout.
+`docker build -t marcinlis82/mistral-tts:1.0.5 .` in this checkout.
 See [deployment security](docs/SECURITY_DEPLOYMENT.md) for LAN-only publication,
 HTTP/HTTPS settings, request limits and image identity checks. Docker and desktop
 launches ignore forwarded headers by default; a reverse proxy needs an explicit
@@ -45,7 +46,7 @@ docker run -d \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
   --name mistral-tts \
-  marcinlis82/mistral-tts:1.0.4
+  marcinlis82/mistral-tts:1.0.5
 ```
 
 Once running, access the WebUI at **`http://localhost:8000`**.
@@ -58,7 +59,7 @@ To run the terminal configuration and progress tracking interface inside the con
 docker run -it --rm \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
-  marcinlis82/mistral-tts:1.0.4 \
+  marcinlis82/mistral-tts:1.0.5 \
   python -m src.cli --tui
 ```
 
@@ -69,7 +70,7 @@ For automated script integrations, execute the CLI directly:
 docker run --rm \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
-  marcinlis82/mistral-tts:1.0.4 \
+  marcinlis82/mistral-tts:1.0.5 \
   python -m src.cli \
   --text /app/storage/book.txt \
   --voice /app/storage/sample.mp3 \
