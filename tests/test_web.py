@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from unittest.mock import patch
 import pytest
@@ -782,3 +783,70 @@ def test_generate_valid_language_variations(valid_lang):
 
 
 
+@pytest.mark.anyio
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits only")
+async def test_run_generation_pipeline_private_upload_permissions():
+    """Temp task dir and uploaded files must be owner-only while the job runs."""
+    import stat
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    task_id = "test-pipeline-private-uploads"
+    db.create_task(task_id)
+    seen = {}
+
+    def inspect_compile(paths, output_path):
+        directory = Path("storage/cache") / f"task_{task_id}"
+        seen["dir_mode"] = stat.S_IMODE(directory.stat().st_mode)
+        for name in ("chapter1.txt", f"voice_{task_id}.mp3"):
+            path = directory / name
+            if path.exists():
+                seen[name] = stat.S_IMODE(path.stat().st_mode)
+        return {"expected_duration": 1.0, "output_duration": 1.0,
+                "total_chunks": 1, "output_path": output_path}
+
+    async def fake_generate_audio(chunk, chunk_path):
+        chunk_path.write_bytes(b"0" * 150)
+
+    with patch("src.web.get_tts_client") as mock_get_tts, \
+         patch("src.web.AudioCompiler") as mock_compiler_cls, \
+         patch("src.core.pipeline.read_input_text", return_value="Test content"), \
+         patch("src.web.TextSplitter") as mock_splitter:
+
+        mock_tts = MagicMock()
+        mock_tts.model = "voxtral-mini-tts-2603"
+        mock_tts.generate_audio = AsyncMock(side_effect=fake_generate_audio)
+        mock_tts.clone_voice = AsyncMock(return_value="ok")
+        mock_get_tts.return_value = mock_tts
+
+        mock_compiler = MagicMock()
+        mock_compiler.compile.side_effect = inspect_compile
+        mock_compiler_cls.return_value = mock_compiler
+
+        mock_splitter.return_value.max_chars = 1000
+        mock_splitter.return_value.split.return_value = ["Test content"]
+
+        try:
+            await run_generation_pipeline(
+                task_id=task_id,
+                api_key="mistral_api_key",
+                text_content=None,
+                text_file_data=("chapter1.txt", b"Test content"),
+                voice_file_data=("voice.mp3", b"\xff\xfb" + b"0" * 200),
+                voice_preset=None,
+                voice_manual_id=None,
+                source_lang=None,
+                target_lang=None,
+                output_filename="audiobook.mp3",
+                engine="mistral"
+            )
+            assert seen["dir_mode"] == 0o700
+            assert seen["chapter1.txt"] == 0o600
+            assert seen[f"voice_{task_id}.mp3"] == 0o600
+        finally:
+            conn = db._get_connection()
+            try:
+                with conn:
+                    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            finally:
+                conn.close()

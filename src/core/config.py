@@ -7,9 +7,24 @@ DEFAULT_TRANSLATION_MODEL = "ministral-8b-latest"
 MODEL_NAME_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.:]+$")
 
 
+def _restrict_env_permissions(env_path: Path) -> None:
+    """API keys and APP_PASSWORD live in .env; keep the file owner-only on POSIX."""
+    if os.name == "posix":
+        try:
+            env_path.chmod(0o600)
+        except OSError:
+            pass
+
+
 def load_environment():
     """Keep ordinary dotenv discovery; allow an explicit file for isolated runs."""
-    return load_dotenv(dotenv_path=os.getenv('BOOKSMITH_ENV_FILE') or None)
+    explicit = os.getenv('BOOKSMITH_ENV_FILE')
+    env_file = explicit or find_dotenv(usecwd=True)
+    if env_file:
+        env_path = Path(env_file)
+        if env_path.exists() and not env_path.is_symlink():
+            _restrict_env_permissions(env_path)
+    return load_dotenv(dotenv_path=explicit or None)
 
 def get_env_path() -> Path:
     """
@@ -73,4 +88,5 @@ def save_translation_model(model_name: str) -> None:
         value_to_set=clean_model,
         quote_mode="never"
     )
+    _restrict_env_permissions(env_path)
     os.environ["MISTRAL_TRANSLATION_MODEL"] = clean_model

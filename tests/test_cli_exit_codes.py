@@ -127,3 +127,21 @@ def test_help_exits_zero_without_generation(invoke_cli, tmp_path):
     assert result.returncode == 0
     assert 'usage:' in result.stdout
     assert not (tmp_path / 'api_called').exists()
+
+
+def test_cli_api_key_argument_warns_about_process_list(invoke_cli, tmp_path):
+    source = tmp_path / 'book.txt'
+    source.write_text('Input text', encoding='utf-8')
+    result = invoke_cli(arguments(source))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'visible in the process' in result.stdout
+    assert 'shell history' in result.stdout
+
+
+def test_no_cli_key_argument_means_no_warning(invoke_cli, tmp_path):
+    source = tmp_path / 'book.txt'
+    source.write_text('Input text', encoding='utf-8')
+    result = invoke_cli(['--text', str(source), '--output', 'audiobook.mp3'],
+                        settings={'MISTRAL_API_KEY': 'env-key'})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'shell history' not in result.stdout

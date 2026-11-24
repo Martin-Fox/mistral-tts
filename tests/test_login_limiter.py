@@ -55,6 +55,35 @@ def test_capacity_fails_closed_without_evicting_limits(clock):
     assert len(limiter._entries) == 2
 
 
+def test_full_table_of_locked_out_sources_does_not_block_new_sources(clock):
+    limiter = LoginLimiter(max_entries=5, source_limit=2, account_limit=5)
+    # source-a reaches its source limit and is locked out; its account entries
+    # are redundant but still occupy table space.
+    assert limiter.consume('source-a', 'user-1') is None
+    assert limiter.consume('source-a', 'user-2') is None
+    assert limiter.consume('source-a', 'user-3') == 300
+    assert len(limiter._entries) == 3  # source + 2 account entries
+    # Fill the rest of the table with a second locked-out source.
+    assert limiter.consume('source-b', 'user-1') is None
+    assert limiter.consume('source-b', 'user-2') is None
+    assert len(limiter._entries) == 5
+    # A brand-new source is still admitted by evicting redundant account entries.
+    assert limiter.consume('new-source', 'admin') is None
+    assert len(limiter._entries) <= 5
+    # The locked-out sources stay locked out; their limits were not reset.
+    assert limiter.consume('source-a', 'user-9') == 300
+    assert limiter.consume('source-b', 'user-9') == 300
+
+
+def test_capacity_still_blocks_when_no_redundant_entries_exist(clock):
+    limiter = LoginLimiter(max_entries=2, source_limit=20)
+    assert limiter.consume('source-a', 'admin') is None
+    assert limiter.consume('source-b', 'admin') == 300
+    assert len(limiter._entries) == 2
+    clock.return_value = 1300
+    assert limiter.consume('source-c', 'admin') is None
+
+
 def test_parallel_requests_cannot_exceed_limit():
     limiter = LoginLimiter()
     with ThreadPoolExecutor(max_workers=10) as executor:
