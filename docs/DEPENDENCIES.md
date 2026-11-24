@@ -12,7 +12,7 @@ testing. Windows smoke/build verification remains audit P22.
 | File | Role |
 | --- | --- |
 | `requirements.in` | Direct runtime dependencies with explicit versions |
-| `requirements-dev.in` | Runtime inputs plus pytest, pytest-timeout, AnyIO, Ruff and uv |
+| `requirements-dev.in` | Runtime inputs plus pytest, pytest-timeout, AnyIO, Ruff, PyInstaller and uv |
 | `constraints.txt` | Compatibility pins for indirect dependencies |
 | `requirements.txt` | Generated runtime lock: complete pins and artifact hashes |
 | `requirements-dev.txt` | Generated development lock: runtime plus development tools |
