@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 import contextvars
 import json
 import logging
@@ -128,8 +129,13 @@ def verify_session(session_id: Optional[str] = Cookie(None)):
             raise HTTPException(status_code=403, detail='Password change required before using the application')
         return token
 
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    await startup_event()
+    yield
+
 app = FastAPI(
-    title="Mistral TTS Booksmith API", docs_url=None, redoc_url=None
+    title="Mistral TTS Booksmith API", docs_url=None, redoc_url=None, lifespan=lifespan
 )
 
 job_controller = JobController(running=2, queued=2)
@@ -822,8 +828,9 @@ async def task_purger_loop():
         await asyncio.sleep(1800)
 
 
-@app.on_event("startup")
 async def startup_event():
+    """Runs once via the app lifespan handler; kept as a plain coroutine so tests
+    can invoke it directly."""
     global APP_USERNAME, APP_PASSWORD, APP_PASSWORD_HASH, job_controller
     validate_retry_settings()
     StoragePolicy.from_env()

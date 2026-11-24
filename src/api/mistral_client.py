@@ -59,11 +59,24 @@ class MistralTTSClient(BaseTTSClient):
             key = hashlib.sha256(json.dumps(kwargs, sort_keys=True).encode()).hexdigest()
             checkpoint = directory / f"{key}.json"
             if checkpoint.exists():
-                saved = json.loads(checkpoint.read_text())
-                if not isinstance(saved.get('content'), str) or not saved['content'].strip():
-                    raise ValueError('Invalid translation checkpoint')
-                return SimpleNamespace(choices=[SimpleNamespace(
-                    message=SimpleNamespace(content=saved['content']), finish_reason=saved.get('finish_reason'))])
+                # A corrupt or stale checkpoint is a cache miss, not a job failure:
+                # re-issue the request instead of aborting the whole translation.
+                content = None
+                finish_reason = None
+                try:
+                    saved = json.loads(checkpoint.read_text(encoding='utf-8'))
+                except (OSError, ValueError):
+                    saved = None
+                if isinstance(saved, dict):
+                    candidate = saved.get('content')
+                    if isinstance(candidate, str) and candidate.strip():
+                        content = candidate
+                        reason = saved.get('finish_reason')
+                        finish_reason = reason if isinstance(reason, str) else None
+                if content is not None:
+                    return SimpleNamespace(choices=[SimpleNamespace(
+                        message=SimpleNamespace(content=content), finish_reason=finish_reason)])
+                logger.warning('Discarding unreadable translation checkpoint %s; re-translating this block', checkpoint)
         await asyncio.to_thread(check_storage_budget)
         response = await call_api(lambda: self.client.chat.complete_async(**kwargs), attempts=attempts)
         if checkpoint is not None and response and response.choices:
