@@ -7,8 +7,9 @@ source with an audio-only component profile. It no longer installs Debian's
 general FFmpeg package and its XML/video/network dependency graph. The Mistral
 SDK/Python lock policy is documented in [Dependencies](DEPENDENCIES.md).
 
-The later authorized Docker release is **1.0.4**; see its
-[image verification, scan and digest](audit/RELEASE_1.0.4_2026-11-18.md).
+The current authorized Docker release is **1.0.5**; see its
+[image verification and digest](audit/RELEASE_1.0.5_2026-11-24.md) (earlier
+[1.0.4 scan and digest](audit/RELEASE_1.0.4_2026-11-18.md)).
 The local validation below preceded that release. Publishing the image did not
 update the installed LAN container.
 

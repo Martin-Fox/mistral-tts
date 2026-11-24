@@ -2,6 +2,45 @@
 
 [Documentation](README.md) · [Project overview](../README.md)
 
+## Security audit remediation — 1.0.5
+
+This release applies the findings of the read-only repository audit of
+2026-11-24 (findings F-01..F-11):
+
+- F-01: the Windows release workflow pins its actions by commit SHA and
+  installs a hash-locked toolchain (`requirements-dev.txt` with
+  `--require-hashes --only-binary=:all:` plus `pip check`);
+  `pyinstaller==6.22.3` is now a pinned dev dependency.
+- F-02: `.env` (provider keys, `APP_PASSWORD`) is tightened to mode `0600` on
+  POSIX at startup and on every write.
+- F-03: `storage/` and per-task upload directories are created `0700`;
+  uploaded text/voice files are published atomically with mode `0600`.
+- F-04: the login limiter no longer locks out brand-new clients when its entry
+  table is full; only redundant entries of already locked-out sources are
+  evicted, so per-source limits still hold.
+- F-05: the desktop launcher warns when binding a non-loopback address without
+  `SESSION_COOKIE_SECURE=true` (cleartext cookies/credentials).
+- F-08: the CLI warns when API keys are passed as command-line arguments
+  (visible in the process list and shell history).
+- F-06: a corrupt translation checkpoint is treated as a cache miss and
+  re-translated instead of failing the whole job.
+- F-07: dead `shutil.which(...)` expression removed from FFmpeg binary
+  resolution.
+- F-09: Google Fonts removed from the WebUI; the CSP now has no external
+  origins (system font stack).
+- F-10: compiled-audiobook duration verification is now two-sided; output
+  longer than expected + 4.0 s tolerance is rejected as well.
+- F-11: the deprecated FastAPI `@app.on_event("startup")` hook is replaced by
+  a lifespan handler.
+
+Verification: full offline test suite **665 passed** (the 2 failures in
+`test_test_isolation.py` are sandbox-only — the `pytest-timeout` plugin is not
+installed locally and both fail identically on the base commit), `ruff check`
+clean, and every finding has a new regression test. Splitter and voice
+preprocessing versions are unchanged, so existing audio caches and saved
+resumable jobs remain compatible.
+See the [1.0.5 image verification and digest](audit/RELEASE_1.0.5_2026-11-24.md).
+
 ## Security update — 1.0.4
 
 This release includes the November 2026 security audit remediations:
