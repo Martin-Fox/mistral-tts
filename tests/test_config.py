@@ -1,4 +1,5 @@
 import os
+import stat
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from src.core.config import (
     DEFAULT_TRANSLATION_MODEL,
     get_env_path,
     get_translation_model,
+    load_environment,
     save_translation_model,
 )
 
@@ -143,3 +145,37 @@ def test_get_env_path():
     path = get_env_path()
     assert isinstance(path, Path)
     assert path.name == ".env"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits only")
+def test_save_translation_model_restricts_env_file_permissions(monkeypatch):
+    """A .env created by save_translation_model must be owner-only (0600)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fake_env = Path(tmpdir) / ".env"
+        with patch("src.core.config.get_env_path", return_value=fake_env):
+            save_translation_model("ministral-8b-latest")
+            assert fake_env.exists()
+            assert stat.S_IMODE(fake_env.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits only")
+def test_save_translation_model_tightens_existing_loose_env(monkeypatch):
+    """An existing world-readable .env is tightened to 0600 on save."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fake_env = Path(tmpdir) / ".env"
+        fake_env.write_text("MISTRAL_API_KEY=secret\n", encoding="utf-8")
+        fake_env.chmod(0o644)
+        with patch("src.core.config.get_env_path", return_value=fake_env):
+            save_translation_model("ministral-8b-latest")
+            assert stat.S_IMODE(fake_env.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits only")
+def test_load_environment_tightens_existing_env_permissions(monkeypatch, tmp_path):
+    """Startup load tightens a loose .env instead of leaving API keys world-readable."""
+    fake_env = tmp_path / ".env"
+    fake_env.write_text("MISTRAL_API_KEY=secret\n", encoding="utf-8")
+    fake_env.chmod(0o644)
+    monkeypatch.setenv("BOOKSMITH_ENV_FILE", str(fake_env))
+    load_environment()
+    assert stat.S_IMODE(fake_env.stat().st_mode) == 0o600

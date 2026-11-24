@@ -182,6 +182,36 @@ def test_translation_response_checkpoints_survive_new_client(tmp_path):
     assert len(list(tmp_path.glob('*.json'))) == 1
 
 
+def test_corrupt_translation_checkpoint_is_retried_not_fatal(tmp_path):
+    calls = []
+    def client():
+        instance = MistralTTSClient('fake-key')
+        instance.translation_cache_dir = tmp_path
+        response = Mock()
+        response.choices = [Mock(message=Mock(content='translated'), finish_reason='stop')]
+        async def complete(**kwargs):
+            calls.append(kwargs)
+            return response
+        instance.client = Mock(chat=Mock(complete_async=complete))
+        return instance
+    async def run():
+        assert await client().translate_text('source', 'English', 'Polish') == 'translated'
+    asyncio.run(run())
+    assert len(calls) == 1
+
+    # Corrupt JSON on disk: treated as a cache miss, the block is re-translated.
+    for path in tmp_path.glob('*.json'):
+        path.write_text('{not valid json', encoding='utf-8')
+    asyncio.run(run())
+    assert len(calls) == 2
+
+    # Valid JSON but empty content: also a miss, never a job failure.
+    for path in tmp_path.glob('*.json'):
+        path.write_text('{"content": "   ", "finish_reason": "stop"}', encoding='utf-8')
+    asyncio.run(run())
+    assert len(calls) == 3
+
+
 def test_restart_during_compilation_reuses_completed_audio(recovery, monkeypatch):
     db, client = recovery
     task_id = str(uuid.uuid4())

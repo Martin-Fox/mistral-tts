@@ -4,7 +4,6 @@ Supports standard system PATH, development workspaces, and bundled PyInstaller e
 """
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -71,14 +70,7 @@ def resolve_binary(binary_name: str) -> str:
         except Exception:
             continue
 
-    # 4. System PATH: check if available in PATH
-    shutil.which(binary_name) or (
-        shutil.which(f"{binary_name}.exe")
-        if (os.name == "nt" or sys.platform.startswith("win"))
-        else None
-    )
-
-    # Return command name for system PATH execution
+    # 4. System PATH: fall back to the bare command name; the OS resolves it via PATH.
     return binary_name
 
 

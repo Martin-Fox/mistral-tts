@@ -1,5 +1,7 @@
 # Dependency management
 
+[Documentation](README.md) · [Project overview](../README.md)
+
 The validated baseline is CPython 3.11 on Linux, matching the Docker Python minor
 version. The locks use platform markers and hashes for other distributions, but
 universal resolution does not replace native Windows/macOS or other Python-minor
@@ -10,7 +12,7 @@ testing. Windows smoke/build verification remains audit P22.
 | File | Role |
 | --- | --- |
 | `requirements.in` | Direct runtime dependencies with explicit versions |
-| `requirements-dev.in` | Runtime inputs plus pytest, pytest-timeout, AnyIO, Ruff and uv |
+| `requirements-dev.in` | Runtime inputs plus pytest, pytest-timeout, AnyIO, Ruff, PyInstaller and uv |
 | `constraints.txt` | Compatibility pins for indirect dependencies |
 | `requirements.txt` | Generated runtime lock: complete pins and artifact hashes |
 | `requirements-dev.txt` | Generated development lock: runtime plus development tools |

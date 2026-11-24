@@ -7,8 +7,7 @@ from starlette.responses import JSONResponse
 
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; script-src 'self'; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; "
     "media-src 'self' blob:; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )

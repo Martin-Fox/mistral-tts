@@ -69,6 +69,36 @@ def test_compile_truncation_detection_raises_runtime_error(tmp_path):
             compiler.compile([c1, c2], output)
 
 
+def test_compile_overlong_output_raises_runtime_error(tmp_path):
+    c1 = tmp_path / "chunk1.mp3"
+    _generate_test_audio(c1, duration_s=2.0)
+
+    output = tmp_path / "output.mp3"
+    compiler = AudioCompiler(pause_duration_s=0.5, trailing_silence_s=1.0)
+    orig_probe = compiler._probe_duration
+    expected_duration = orig_probe(c1) + 0.5 + 1.0
+
+    # Output longer than expected + 4.0s tolerance must be rejected too.
+    def mock_probe_overlong(p):
+        if p == c1:
+            return orig_probe(p)
+        return expected_duration + 5.0
+
+    with patch.object(compiler, "_probe_duration", side_effect=mock_probe_overlong):
+        with pytest.raises(RuntimeError, match="unexpectedly long output"):
+            compiler.compile([c1], output)
+
+    # Within the upper tolerance the compile still passes.
+    def mock_probe_edge(p):
+        if p == c1:
+            return orig_probe(p)
+        return expected_duration + 3.5
+
+    with patch.object(compiler, "_probe_duration", side_effect=mock_probe_edge):
+        meta = compiler.compile([c1], output)
+        assert meta["output_duration"] == expected_duration + 3.5
+
+
 def test_compile_tolerance_boundary_pass_and_fail(tmp_path):
     c1 = tmp_path / "chunk1.mp3"
     c2 = tmp_path / "chunk2.mp3"

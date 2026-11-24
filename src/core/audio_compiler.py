@@ -222,6 +222,12 @@ class AudioCompiler:
                     f"but final file is only {output_duration:.2f}s. "
                     f"Audio was truncated by {expected_duration - output_duration:.2f}s!"
                 )
+            if output_duration > (expected_duration + tolerance):
+                raise RuntimeError(
+                    f"Audiobook compilation produced unexpectedly long output: expected ~{expected_duration:.2f}s "
+                    f"across {len(chunk_paths)} chunks, but final file is {output_duration:.2f}s "
+                    f"(exceeds the +{tolerance:.1f}s tolerance)."
+                )
 
             staged_output.replace(output_path)
 

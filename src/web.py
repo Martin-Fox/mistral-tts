@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 import contextvars
 import json
 import logging
@@ -26,7 +27,7 @@ from src.api.factory import get_tts_client
 from src.core.resource_limits import ResourceLimits, ResourceLimitExceeded, check_text
 from src.web_limits import JobController, GenerationRequestLimits, GenerationRoute
 from src.core.audio_compiler import AudioCompiler
-from src.core.cache_io import run_blocking_until_done
+from src.core.cache_io import run_blocking_until_done, staged_file
 from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
 from src.core.auth import hash_password, verify_password, load_credentials, save_credentials, password_meets_policy
 from src.web_security import WebSecurity
@@ -55,9 +56,11 @@ def get_static_dir() -> Path:
 # Static assets can live in a read-only source or PyInstaller directory.
 STATIC_DIRECTORY = get_static_dir()
 
-# Only mutable storage is created at startup.
-Path("storage/cache").mkdir(parents=True, exist_ok=True)
-Path("storage/output").mkdir(parents=True, exist_ok=True)
+# Only mutable storage is created at startup. It holds uploads and outputs, so
+# new directories are owner-only; existing directories keep their mode.
+Path("storage").mkdir(mode=0o700, exist_ok=True)
+Path("storage/cache").mkdir(mode=0o700, parents=True, exist_ok=True)
+Path("storage/output").mkdir(mode=0o700, parents=True, exist_ok=True)
 
 
 # Set up logging
@@ -126,8 +129,13 @@ def verify_session(session_id: Optional[str] = Cookie(None)):
             raise HTTPException(status_code=403, detail='Password change required before using the application')
         return token
 
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    await startup_event()
+    yield
+
 app = FastAPI(
-    title="Mistral TTS Booksmith API", docs_url=None, redoc_url=None
+    title="Mistral TTS Booksmith API", docs_url=None, redoc_url=None, lifespan=lifespan
 )
 
 job_controller = JobController(running=2, queued=2)
@@ -221,21 +229,23 @@ async def run_generation_pipeline(
 
         # 1. Save uploaded text file or text content to a temporary task directory
         task_temp_dir = Path("storage/cache") / f"task_{task_id}"
-        task_temp_dir.mkdir(parents=True, exist_ok=True)
+        task_temp_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         if text_file_data:
             filename, content = text_file_data
             suffix = Path(filename).suffix or ".txt"
             base_stem = Path(filename).stem
             safe_stem = re.sub(r'[^a-zA-Z0-9_-]', '_', base_stem) or "input"
             text_path = task_temp_dir / f"{safe_stem}{suffix}"
-            with open(text_path, "wb") as f:
-                f.write(content)
+            with staged_file(text_path) as temporary:
+                temporary.write_bytes(content)
+                temporary.replace(text_path)
             logger.info(f"Saved uploaded text file to {text_path}")
         elif text_content is not None:
             input_encoding = "utf-8"
             text_path = task_temp_dir / "input.txt"
-            with open(text_path, "w", encoding="utf-8") as f:
-                f.write(text_content)
+            with staged_file(text_path) as temporary:
+                temporary.write_text(text_content, encoding="utf-8")
+                temporary.replace(text_path)
             logger.info(f"Saved text content to temporary file {text_path}")
         else:
             raise ValueError("No text input provided.")
@@ -245,8 +255,9 @@ async def run_generation_pipeline(
             filename, content = voice_file_data
             suffix = Path(filename).suffix or ".mp3"
             voice_path = task_temp_dir / f"voice_{task_id}{suffix}"
-            with open(voice_path, "wb") as f:
-                f.write(content)
+            with staged_file(voice_path) as temporary:
+                temporary.write_bytes(content)
+                temporary.replace(voice_path)
             logger.info(f"Saved uploaded voice file to {voice_path}")
 
         effective_translation_model = (translation_model or get_translation_model()) if target_lang else None
@@ -817,8 +828,9 @@ async def task_purger_loop():
         await asyncio.sleep(1800)
 
 
-@app.on_event("startup")
 async def startup_event():
+    """Runs once via the app lifespan handler; kept as a plain coroutine so tests
+    can invoke it directly."""
     global APP_USERNAME, APP_PASSWORD, APP_PASSWORD_HASH, job_controller
     validate_retry_settings()
     StoragePolicy.from_env()

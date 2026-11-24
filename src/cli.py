@@ -141,6 +141,13 @@ async def main() -> int:
     mistral_key = args.api_key or os.getenv("MISTRAL_API_KEY")
     openai_key = args.openai_key or os.getenv("OPENAI_API_KEY")
 
+    if args.api_key or args.openai_key:
+        console.print(
+            "[yellow]Warning:[/yellow] API keys passed as command-line arguments are visible "
+            "in the process list and shell history. Prefer MISTRAL_API_KEY / OPENAI_API_KEY "
+            "in .env or the environment."
+        )
+
     if args.tui:
         from src.tui import BooksmithTUI
         app = BooksmithTUI()

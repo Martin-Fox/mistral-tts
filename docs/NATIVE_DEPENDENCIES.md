@@ -1,5 +1,7 @@
 # Native dependency baseline (2026-11-18)
 
+[Documentation](README.md) · [Project overview](../README.md)
+
 The current Docker recipe targets FFmpeg/ffprobe **9.0.2**, built from reviewed
 source with an audio-only component profile. It no longer installs Debian's
 general FFmpeg package and its XML/video/network dependency graph. The Mistral

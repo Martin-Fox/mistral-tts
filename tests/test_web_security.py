@@ -233,3 +233,12 @@ def test_expired_change_only_session_does_not_leave_permission_state():
     web.password_change_sessions.add('expired')
     assert not web.session_is_valid('expired')
     assert 'expired' not in web.password_change_sessions
+
+
+def test_csp_and_index_html_have_no_external_origins():
+    response = TestClient(web.app).get('/')
+    csp = response.headers['Content-Security-Policy']
+    assert 'https://' not in csp
+    assert "font-src 'self'" in csp
+    assert 'fonts.googleapis' not in response.text
+    assert 'fonts.gstatic' not in response.text

@@ -32,8 +32,21 @@ class LoginLimiter:
                 return max(1, math.ceil(max(blocked_until) - now))
             missing = sum(key not in self._entries for key in keys)
             if len(self._entries) + missing > self.max_entries:
-                # Do not evict live limits: rotating usernames/IPs must not reset them.
-                return max(1, math.ceil(min(value[1] for value in self._entries.values()) - now))
+                # Free space only by dropping account entries of sources that are
+                # already locked out at their source limit: those entries are
+                # redundant. Never evict live limits, and never lock out a
+                # brand-new source just because the table is full.
+                locked_sources = {key[1] for key, (count, _) in self._entries.items()
+                                  if key[0] == "source" and count >= self.source_limit}
+                redundant = sorted((key for key in self._entries
+                                    if key[0] == "account" and key[1] in locked_sources),
+                                   key=lambda key: self._entries[key][1])
+                for key in redundant:
+                    if len(self._entries) + missing <= self.max_entries:
+                        break
+                    del self._entries[key]
+                if len(self._entries) + missing > self.max_entries:
+                    return max(1, math.ceil(min(value[1] for value in self._entries.values()) - now))
             for key in keys:
                 count, expiry = self._entries.get(key, (0, now + self.window_seconds))
                 self._entries[key] = (count + 1, expiry)

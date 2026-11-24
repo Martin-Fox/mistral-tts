@@ -33,6 +33,25 @@ logging.basicConfig(
 logger = logging.getLogger("booksmith-desktop")
 
 
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def warn_on_cleartext_binding(host: str) -> None:
+    """Warn when a non-loopback listener runs without Secure cookies: session
+    cookies and credentials would travel in cleartext HTTP. TLS termination is
+    the operator's responsibility (see docs/SECURITY_DEPLOYMENT.md)."""
+    if host in LOOPBACK_HOSTS:
+        return
+    secure = os.getenv("SESSION_COOKIE_SECURE", "false").strip().lower() == "true"
+    if not secure:
+        logger.warning(
+            "Binding to %s without SESSION_COOKIE_SECURE=true exposes session cookies "
+            "and credentials over cleartext HTTP. Publish on loopback only, or put the "
+            "WebUI behind a TLS reverse proxy for remote access.",
+            host,
+        )
+
+
 def find_available_port(start_port: int = 8000, max_attempts: int = 20) -> int:
     """Finds an available TCP port starting from start_port."""
     for port in range(start_port, start_port + max_attempts):
@@ -73,6 +92,7 @@ def run_app(host: str = "127.0.0.1", port: Optional[int] = None, open_browser_ta
         port = find_available_port(8000)
 
     url = f"http://{host}:{port}"
+    warn_on_cleartext_binding(host)
     logger.info(f"Starting Mistral-TTS-Booksmith at {url}")
     print("\n" + "=" * 56)
     print(" Mistral-TTS-Booksmith Desktop Server")

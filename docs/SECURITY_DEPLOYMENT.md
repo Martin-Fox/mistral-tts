@@ -1,5 +1,7 @@
 # WebUI deployment security
 
+[Documentation](README.md) · [Project overview](../README.md)
+
 The supported model is one account, one worker and one replica. LAN access still
 requires authentication and a strong unique password. Anyone using the shared
 account can access its jobs and use server-side provider keys; it is not a

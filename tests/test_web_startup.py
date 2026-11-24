@@ -47,3 +47,25 @@ def test_startup_accepts_configured_credentials(monkeypatch, tmp_path):
 
     purger.assert_called_once_with()
     create_task.assert_called_once_with(purger.return_value)
+
+
+def test_app_uses_lifespan_handler_not_deprecated_on_event():
+    # The deprecated on_event hooks are unused; startup runs via the lifespan.
+    assert web.app.router.on_startup == []
+    assert web.app.router.on_shutdown == []
+
+
+def test_lifespan_invokes_startup_event(monkeypatch):
+    called = []
+
+    async def fake_startup():
+        called.append(True)
+
+    monkeypatch.setattr(web, 'startup_event', fake_startup)
+
+    async def run():
+        async with web.lifespan(web.app):
+            pass
+
+    asyncio.run(run())
+    assert called == [True]
