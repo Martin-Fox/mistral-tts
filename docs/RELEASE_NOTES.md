@@ -39,7 +39,11 @@ installed locally and both fail identically on the base commit), `ruff check`
 clean, and every finding has a new regression test. Splitter and voice
 preprocessing versions are unchanged, so existing audio caches and saved
 resumable jobs remain compatible.
-See the [1.0.5 image verification and digest](audit/RELEASE_1.0.5_2026-11-24.md).
+The published **linux/amd64** image (`marcinlis82/mistral-tts:1.0.5`, with
+`latest` pointing at the same manifest) has manifest digest
+`sha256:373b47b928b5b9e6a0b484526f378d9d3295093f692593d9f6c7c8e8e78b3162`
+(config digest `sha256:a75c2dd83ed758cfd6248c2de39aab9642401d9eecdf62851ff10f57b2e1c589`),
+verified on 2026-11-24 via `docker manifest inspect` and the Docker Hub API.
 
 ## Security update — 1.0.4
 
@@ -76,12 +80,14 @@ and locally compiled FFmpeg, plus **223 portable smoke tests** (a subset).
 These are offline checks, not native Windows acceptance or a zero-CVE claim for
 the image. FFmpeg retains known native risks, including MOV parsing used for
 generated M4B verification; decoder limits are not a complete OS sandbox.
-See the [audit and remediation record](audit/SECURITY_AUDIT_2026-11-18.md),
-[dependency update report](audit/SECURITY_DEPENDENCY_UPDATES_2026-11-18.md),
-[native dependency limits](NATIVE_DEPENDENCIES.md) and
-[deployment guidance](SECURITY_DEPLOYMENT.md).
+See [native dependency limits](NATIVE_DEPENDENCIES.md) and
+[deployment guidance](SECURITY_DEPLOYMENT.md). Dated audit reports and raw
+scanner evidence are no longer kept in this repository (decision of 2026-11-24);
+see [plans/2026-11-24-audit-comparison.md](plans/2026-11-24-audit-comparison.md).
 
 The published **linux/amd64** image passed **7 Docker smoke checks**. Its package
 scan found **0 Critical** and **0 Python findings**, with **96 remaining OS CVEs**
 (including 11 High); compiled FFmpeg also retains separately documented risks.
-See the [1.0.4 image verification and digest](audit/RELEASE_1.0.4_2026-11-18.md).
+The 1.0.4 image manifest digest was
+`sha256:6a33ab36dcbe5a1b0d18878a1dc19646fda1eddaf2c30d66e416d1a47c4410a5`
+(superseded by 1.0.5).

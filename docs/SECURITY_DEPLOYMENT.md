@@ -165,20 +165,20 @@ claim to remove the dependency/FFmpeg vulnerabilities reserved for later items.
 It follows PROJECT.md's single-worker model and retains the audio pipeline,
 resume contract and SDK pin without new dependencies.
 
-The subsequent [media/dependency refresh](audit/SECURITY_REMEDIATION_2_3_2026-11-18.md)
-has not been built into an image, by operator instruction. The tag above still
-identifies the earlier request-protection build, not the latest source changes.
+The subsequent media/dependency refresh has not been built into an image, by
+operator instruction. The tag above still identifies the earlier
+request-protection build, not the latest source changes.
 
-The [password/CSRF/XML stage](audit/SECURITY_REMEDIATION_5_2026-11-18.md) also remains
-source-only. Before a future upgrade, configure a 12-1024-character environment
+The password/CSRF/XML stage also remains source-only. Before a future upgrade,
+configure a 12-1024-character environment
 password if there is no persisted auth file. A persisted short password gives
 only a change-password session. The browser adds the write-request header
 automatically; non-browser HTTP integrations must send
 `X-Requested-With: Booksmith` if they omit Origin. HTTPS proxies must establish
 the actual scheme through explicitly trusted Uvicorn proxy settings.
 
-The [SDK/native update](audit/SECURITY_DEPENDENCY_UPDATES_2026-11-18.md) selects
-Mistral 2.10.1 and patched OpenTelemetry in the locks. Dockerfile now prepares
+The SDK/native update selects Mistral 2.10.1 and patched OpenTelemetry in the
+locks. Dockerfile now prepares
 an audio-only FFmpeg 9.0.2 without libxml2; local native tests passed, but this
 stage has not built/published an image or changed the LAN deployment either.
 
@@ -188,7 +188,6 @@ stage has not built/published an image or changed the LAN deployment either.
 The operator subsequently authorized building and publishing the updated image.
 `marcinlis82/mistral-tts:1.0.5` (and `latest`, pointing at the same manifest) is
 published for linux/amd64; earlier paragraphs record stage-specific verification
-and the older local image. See the
-[1.0.5 release checks and exact digest](audit/RELEASE_1.0.5_2026-11-24.md) and the
-[1.0.4 remaining CVEs](audit/RELEASE_1.0.4_2026-11-18.md).
+and the older local image. The exact digest and release checks are recorded in
+the [1.0.5 release notes](RELEASE_NOTES.md#security-audit-remediation--105).
 The LAN deployment has not been changed by publishing this image.

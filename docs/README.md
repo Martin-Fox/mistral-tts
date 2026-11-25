@@ -38,20 +38,13 @@ The detailed references explain the contracts behind those procedures:
 | [Python dependencies](DEPENDENCIES.md) | Hash-locked installation, paired lock updates and dependency audits |
 | [Native dependencies](NATIVE_DEPENDENCIES.md) | FFmpeg source/hash, enabled components, licensing and remaining native risks |
 
-## Audit and release evidence
+## Audit evidence and release notes
 
-Dated reports record what was checked at a particular revision or release.
-They do not replace the current guides or establish the state of a running
-installation.
-
-- [1.0.5 image verification and digest](audit/RELEASE_1.0.5_2026-11-24.md).
-- [1.0.4 image verification and digest](audit/RELEASE_1.0.4_2026-11-18.md).
-- [November 2026 security audit](audit/SECURITY_AUDIT_2026-11-18.md), followed by
-  [media/dependency remediation](audit/SECURITY_REMEDIATION_2_3_2026-11-18.md),
-  [authentication/XML remediation](audit/SECURITY_REMEDIATION_5_2026-11-18.md)
-  and [SDK/native updates](audit/SECURITY_DEPENDENCY_UPDATES_2026-11-18.md).
-- [Earlier repository audit](audit/AUDIT_REPORT.md) and its
-  [remediation plan](audit/REFACTORING_PLAN.md).
+Image digests and release verification summaries live in
+[Release notes](RELEASE_NOTES.md). Per the 2026-11-24 decision, dated audit
+reports and raw scanner evidence are no longer kept in this repository; the
+comparison of the 2026-11-24 re-audit with the previous audits is recorded in
+[plans/2026-11-24-audit-comparison.md](plans/2026-11-24-audit-comparison.md).
 
 Design and implementation notes under `plans/` are historical proposals;
 implemented behavior and acceptance status belong in the current guides.
@@ -62,9 +55,10 @@ implemented behavior and acceptance status belong in the current guides.
 - Keep the root README focused on the overview, one quick start and navigation.
 - Update the relevant guide with a behavior change. Keep configuration tables
   and technical contracts in their reference page; link to them from other guides.
-- Put version-specific migration notes in release notes and dated test/CVE
-  evidence in audit reports. Distinguish implemented behavior from pending
-  platform or deployment acceptance.
+- Put version-specific migration notes in release notes. Keep dated audit and
+  scanner evidence outside the public repository (private archive); link only
+  conclusions and plans from `plans/`. Distinguish implemented behavior from
+  pending platform or deployment acceptance.
 - When moving a section, update relative links and heading anchors throughout
   the repository. Check links, fenced examples and `git diff --check` before
   publishing documentation changes.

@@ -19,8 +19,8 @@ docker pull marcinlis82/mistral-tts:1.0.5
 mkdir -p storage
 ```
 
-See the [1.0.5 image checks and digest](docs/audit/RELEASE_1.0.5_2026-11-24.md)
-(and the earlier [1.0.4 CVE scan](docs/audit/RELEASE_1.0.4_2026-11-18.md)).
+See the [1.0.5 release notes](docs/RELEASE_NOTES.md#security-audit-remediation--105)
+for the verified image digest and checks.
 
 See [Operations](docs/OPERATIONS.md) for TLS, restart recovery, backup/restore and
 upgrade/rollback procedures. All examples below use the versioned image. To build from source, run

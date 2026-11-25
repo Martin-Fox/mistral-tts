@@ -128,8 +128,8 @@ and dev-only uv 0.11.7 to 0.13.4. No Python dependency was added. The SDK remain
 runtime also imported CLI/TUI/WebUI and both client factories after uninstalling
 pip/setuptools/wheel. Both locks retain two OpenTelemetry API advisories:
 `CVE-2026-114603` and `CVE-2026-126360`. Its version cannot be updated independently
-of the SDK/semantic-conventions contract; see the
-[security audit](audit/SECURITY_AUDIT_2026-11-18.md#konflikt-aktualizacji-opentelemetry).
+of the SDK/semantic-conventions contract; see the SDK and native update stage
+below and the SDK contract in [Project contract](../PROJECT.md).
 
 Per operator instruction, this refresh **does not build or publish a Docker
 image**. The zlib version guard, installer cleanup and prlimit installation are

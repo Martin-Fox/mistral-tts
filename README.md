@@ -81,8 +81,8 @@ Review [1.0.5 changes](docs/RELEASE_NOTES.md#security-audit-remediation--105)
 for the audit-remediation changes, then follow the
 [upgrade procedure](docs/OPERATIONS.md#upgrade-and-rollback).
 
-The [1.0.5 release report](docs/audit/RELEASE_1.0.5_2026-11-24.md) records the
-verified image digest and tests. Offline tests do not establish
+The [1.0.5 release notes](docs/RELEASE_NOTES.md#security-audit-remediation--105)
+record the verified image digest and tests. Offline tests do not establish
 provider access or output quality; native Windows acceptance and some security
 work remain open.
 

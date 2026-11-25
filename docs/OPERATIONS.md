@@ -5,8 +5,9 @@
 This describes the current source tree, not a guarantee about an existing
 registry image. Build from the intended checkout and record its exact revision
 and local changes, or record the immutable image ID/digest used for deployment.
-The original [audit](audit/AUDIT_REPORT.md) and [plan](audit/REFACTORING_PLAN.md)
-are historical inputs, not a live list of unremediated findings.
+The original audit report and remediation plan are historical inputs, not a
+live list of unremediated findings; since 2026-11-24 they are kept outside this
+repository — see [plans/2026-11-24-audit-comparison.md](plans/2026-11-24-audit-comparison.md).
 
 ## Supported operating model and configuration
 
