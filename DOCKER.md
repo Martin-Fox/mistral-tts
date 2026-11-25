@@ -99,8 +99,19 @@ The main environment variables are listed below. Full configuration tables are i
 | `MISTRAL_API_KEY` | Your Mistral AI API Key (required for Voxtral TTS and Translation). |
 | `OPENAI_API_KEY` | Your OpenAI API Key (required if selecting the OpenAI TTS engine). |
 | `MISTRAL_TRANSLATION_MODEL` | Mistral chat model for text translation (default: `ministral-8b-latest`). |
+| `API_REQUEST_TIMEOUT_SECONDS` | Maximum duration of one API request attempt (default: `60`). Raise it when translating with reasoning models such as `mistral-large-latest`, which can take longer than 60 s per chunk. |
+| `API_RETRY_BUDGET_SECONDS` | Total request/retry/backoff budget for one remote operation (default: `180`). Raise it together with `API_REQUEST_TIMEOUT_SECONDS` for slow reasoning models. |
 | `APP_USERNAME` | Custom username for WebUI cookie authentication (default: `admin`). |
 | `APP_PASSWORD` | Required unique password for WebUI cookie authentication; empty values and `admin` are rejected at startup. |
+
+For example, to translate with `mistral-large-latest` add to your env file:
+
+```
+API_REQUEST_TIMEOUT_SECONDS=300
+API_RETRY_BUDGET_SECONDS=900
+```
+
+See [API retries and deadlines](docs/PROCESSING.md#api-retries-and-deadlines) for details.
 
 Without an existing auth file, use 12-1024 characters (at least 12 after trimming)
 before upgrading. Persisted legacy short passwords allow only a password-change
