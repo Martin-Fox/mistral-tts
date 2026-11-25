@@ -140,6 +140,25 @@ See [Configured provider models](#configured-provider-models) for the models thi
 
 These are interface choices, not an account-access or translation-quality guarantee.
 
+`mistral-large-latest` is a reasoning model: it spends time in a thinking phase
+before answering, so a translation request can take noticeably longer than with
+the other models — often more than the default 60-second per-request timeout
+(`API_REQUEST_TIMEOUT_SECONDS`). If translation with this model fails with
+`TimeoutError` / `API retry budget exhausted`, raise the retry settings in the
+environment, for example in `docker-compose.yml`:
+
+```yaml
+environment:
+  - MISTRAL_API_KEY=...
+  - API_REQUEST_TIMEOUT_SECONDS=300
+  - API_RETRY_BUDGET_SECONDS=900
+```
+
+See [API retries and deadlines](PROCESSING.md#api-retries-and-deadlines) for the
+full description of these variables. Responses from reasoning models arrive as
+chunked content (thinking + text); the client extracts the text chunks
+automatically.
+
 #### Changing the model
 
 - **WebUI:** Expand **Translation Settings** and select the desired model from the **Translation Model** dropdown. The selection is automatically sent to `POST /api/config` and saved to the selected dotenv file without requiring a backend restart. See [configuration precedence](OPERATIONS.md#supported-operating-model-and-configuration).

@@ -153,6 +153,14 @@ client construction. A method's `retry_count` means maximum total attempts:
 3 by default for TTS/listing and 5 for translation. The budget is per operation,
 not for an entire book. Local processing uses the separate audio budgets.
 
+Reasoning translation models such as `mistral-large-latest` can exceed the
+default 60-second request timeout on large translation chunks because the model
+thinks before answering; every attempt then burns the full request timeout and
+the operation ends with `API retry budget exhausted`. Raise
+`API_REQUEST_TIMEOUT_SECONDS` (and `API_RETRY_BUDGET_SECONDS`) in the environment
+when using such a model — see
+[translation model configuration](USAGE.md#configured-translation-models).
+
 Backoff doubles from 1 second, or 15 seconds for `429` without usable Retry-After,
 with bounded positive jitter. Retry-After accepts seconds or an HTTP date and is
 respected as a minimum wait. If it exceeds the configured maximum delay, the
