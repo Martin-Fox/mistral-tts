@@ -25,6 +25,30 @@ load_environment()
 
 logger = logging.getLogger(__name__)
 
+
+def message_text(message) -> str:
+    """Extract plain text from a chat message.
+
+    Reasoning models (e.g. mistral-large-latest) return content as a list of
+    chunks; only text chunks carry the answer, thinking chunks do not.
+    """
+    content = getattr(message, 'content', None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for chunk in content:
+            if isinstance(chunk, dict):
+                if chunk.get('type') == 'text' and isinstance(chunk.get('text'), str):
+                    parts.append(chunk['text'])
+            elif getattr(chunk, 'type', 'text') == 'text':
+                text = getattr(chunk, 'text', None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return ''.join(parts)
+    return ''
+
+
 class MistralTTSClient(BaseTTSClient):
     """
     Wrapper for Mistral AI Voxtral API interaction, including voice cloning
@@ -81,7 +105,7 @@ class MistralTTSClient(BaseTTSClient):
         response = await call_api(lambda: self.client.chat.complete_async(**kwargs), attempts=attempts)
         if checkpoint is not None and response and response.choices:
             choice = response.choices[0]
-            content = choice.message.content
+            content = message_text(choice.message)
             reason = getattr(choice, 'finish_reason', None)
             if isinstance(content, str) and content.strip() and reason != 'length':
                 save_json_atomic(checkpoint, {'content': content,
@@ -261,8 +285,8 @@ class MistralTTSClient(BaseTTSClient):
                 raise RuntimeError("Mistral translation exceeded token output capacity (finish_reason='length').")
             if isinstance(finish_reason, str) and finish_reason != "stop":
                 raise ValueError(f"Unsupported translation finish reason: {finish_reason}")
-            content = choice.message.content
-            if not isinstance(content, str) or not content.strip():
+            content = message_text(choice.message)
+            if not content.strip():
                 raise ValueError("Translation API returned empty or non-text content")
             return check_text(content.strip())
         raise ValueError("Empty response from translation API")
@@ -412,8 +436,8 @@ class MistralTTSClient(BaseTTSClient):
                     reason = getattr(choice, "finish_reason", None)
                     if isinstance(reason, str) and reason != "stop":
                         raise ValueError(f"Unsupported translation finish reason: {reason}")
-                    res_content = choice.message.content
-                    if not isinstance(res_content, str):
+                    res_content = message_text(choice.message)
+                    if not res_content:
                         raise ValueError("Batch response must be text containing JSON")
                     check_text(res_content)
                     res_json = json.loads(res_content)

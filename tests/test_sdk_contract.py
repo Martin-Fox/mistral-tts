@@ -83,6 +83,25 @@ async def test_real_sdk_translation_and_json_batch_format(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_real_sdk_reasoning_model_chunked_content_is_parsed(monkeypatch):
+    def handle(request):
+        assert request.url.path == '/v1/chat/completions'
+        return httpx.Response(200, json={
+            'id': 'offline', 'object': 'chat.completion', 'model': 'mistral-large-latest', 'created': 1,
+            'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+            'choices': [{'index': 0, 'finish_reason': 'stop',
+                         'message': {'role': 'assistant', 'content': [
+                             {'type': 'thinking', 'thinking': [{'type': 'text', 'text': 'let me think'}]},
+                             {'type': 'text', 'text': 'Cześć.'},
+                         ]}}],
+        })
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        install_transport(monkeypatch, http)
+        client = MistralTTSClient('synthetic-key', translation_model='mistral-large-latest')
+        assert await client.translate_text('Hello.', 'English', 'Polish', retry_count=1) == 'Cześć.'
+
+
+@pytest.mark.anyio
 async def test_real_sdk_model_and_voice_lists_include_optional_slug(monkeypatch):
     def handle(request):
         if request.url.path == '/v1/models':
