@@ -19,8 +19,11 @@ class LoginLimiter:
         """Reserve an attempt atomically, or return seconds until retry is allowed."""
         source = hashlib.sha256(source.encode("utf-8")).digest()
         account = hashlib.sha256(username.encode("utf-8")).digest()
-        keys = [("source", source), ("account", source, account)]
-        limits = [self.source_limit, self.account_limit]
+        # ("account", account) is a global per-account bucket: attempts on one
+        # account count across all source addresses, so rotating source IPs
+        # cannot multiply the account allowance.
+        keys = [("source", source), ("account", source, account), ("account", account)]
+        limits = [self.source_limit, self.account_limit, self.account_limit]
         with self._lock:
             now = time.monotonic()
             self._entries = {key: value for key, value in self._entries.items() if value[1] > now}
@@ -39,7 +42,7 @@ class LoginLimiter:
                 locked_sources = {key[1] for key, (count, _) in self._entries.items()
                                   if key[0] == "source" and count >= self.source_limit}
                 redundant = sorted((key for key in self._entries
-                                    if key[0] == "account" and key[1] in locked_sources),
+                                    if key[0] == "account" and len(key) == 3 and key[1] in locked_sources),
                                    key=lambda key: self._entries[key][1])
                 for key in redundant:
                     if len(self._entries) + missing <= self.max_entries:

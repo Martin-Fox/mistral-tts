@@ -112,14 +112,16 @@ async def _communicate_bounded(process, limit):
     return stdout, stderr, exceeded
 
 
-async def run_process_async(cmd, *, timeout, env=None, cwd=None, max_output_bytes=65536):
+async def run_process_async(cmd, *, timeout, env=None, cwd=None, max_output_bytes=65536, preexec_fn=None):
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('Process timeout must be finite and positive')
     if max_output_bytes <= 0:
         raise ValueError('Process output limit must be positive')
+    # preexec_fn is POSIX-only; callers pass it only where resource limits apply.
     process = await asyncio.create_subprocess_exec(
         *cmd, stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env, cwd=cwd)
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env, cwd=cwd,
+        preexec_fn=preexec_fn)
     communication = asyncio.create_task(_communicate_bounded(process, max_output_bytes))
     try:
         stdout, stderr, exceeded = await asyncio.wait_for(asyncio.shield(communication), timeout)

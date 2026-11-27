@@ -70,6 +70,18 @@ If a proxy is installed, opt in with `--proxy-headers` and
 forwarding headers. Never use `*` on a reachable backend. A host proxy's address
 as seen by a bridged container is often its gateway, not `127.0.0.1`.
 
+Independently of Uvicorn's flags, the application can resolve the real client
+address from `X-Forwarded-For` itself, but only when the direct peer is inside
+`TRUSTED_PROXY_CIDRS` (comma-separated CIDRs, e.g.
+`TRUSTED_PROXY_CIDRS=10.0.0.0/8,192.168.1.1/32`). With the default
+`--no-proxy-headers` command, set this to the proxy's address so the login
+limiter sees real client addresses instead of the shared proxy address. Unset
+or empty (default) trusts no proxy, so client-supplied forwarding headers are
+ignored and cannot spoof the limiter. Only plain IP entries are accepted, the
+rightmost untrusted hop wins, and malformed, duplicated or overlong (more than
+16 entries) `X-Forwarded-For` headers are ignored. An invalid value stops
+startup.
+
 For an existing Nginx HTTPS virtual host, the following location illustrates
 limits compatible with the default application budgets. Certificate paths,
 hostname, trusted proxy IP and network routing remain deployment-specific:
@@ -116,6 +128,13 @@ application budgets when intentionally accepting larger/slower uploads.
 - Usernames have a 256-character limit, passwords a 1024-character limit and
   model IDs a 100-character limit. Existing usernames/passwords beyond these
   bounds need operator-assisted credential replacement; never copy them into logs.
+- Login attempts are limited to 20 per source address and 5 per username per
+  5-minute window; the username counter is global across all source addresses,
+  so rotating addresses cannot multiply it. The source address is the ASGI peer,
+  or the `X-Forwarded-For` client only when the peer is inside
+  `TRUSTED_PROXY_CIDRS`. Successful and failed logins, lockouts, logouts and
+  password changes are logged on the `booksmith.auth` logger with the source
+  address and username only — never passwords, session tokens or API keys.
 
 ## Record and verify the deployed artifact
 

@@ -84,24 +84,33 @@ scripts conflict with the CSP; `/openapi.json` remains available.
 
 ## Login attempt limits
 
-The WebUI allows **5 attempts per username and client address** and **20 attempts
-per client address across all usernames** in a 5-minute fixed window. Successful
-attempts count too. Exhausting either limit returns HTTP `429` with `Retry-After`
-in seconds, before password hashing. Rejected attempts do not extend the window.
-A different address has an independent allowance; this is not a global account
-lockout. Use network-level controls for distributed brute-force attacks.
+The WebUI allows **20 attempts per client address across all usernames** and
+**5 attempts per username** in a 5-minute fixed window. The username counter is
+global across all client addresses, so rotating addresses cannot multiply the
+account allowance. Successful attempts count too. Exhausting a limit returns
+HTTP `429` with `Retry-After` in seconds, before password hashing. Rejected
+attempts do not extend the window. Different addresses keep independent source
+allowances. Use network-level controls for distributed brute-force attacks.
+
+Successful and failed logins, lockouts, logouts and password changes are logged
+on the `booksmith.auth` logger with the source address and username only — never
+passwords, session tokens or API keys.
 
 The limiter stores at most 1024 counters per process and does not evict active
 limits to admit new identities. If full, attempts requiring new counters receive
 `429` until space expires; existing identities still use their remaining allowance.
 State is lost on restart. The single-worker requirement also applies here.
 
-The application uses the ASGI client address and does not parse `X-Forwarded-For`
-or `Forwarded` itself. For direct Uvicorn access, use `--no-proxy-headers`. Behind
-a reverse proxy, use `--proxy-headers --forwarded-allow-ips=<trusted-proxy-IP>` and
-prevent clients from bypassing that proxy. Never trust arbitrary forwarded headers
-(`--forwarded-allow-ips='*'`) on an exposed listener. Without trusted forwarding,
-users behind one proxy/NAT share the source allowance. Configure TLS separately.
+By default the application uses the ASGI client address and ignores
+`X-Forwarded-For` and `Forwarded` entirely. Behind a reverse proxy, either let
+Uvicorn resolve the client (`--proxy-headers --forwarded-allow-ips=<trusted-proxy-IP>`,
+never `*` on an exposed listener) or set `TRUSTED_PROXY_CIDRS` to the proxy's
+CIDR ranges so the app resolves the client itself: the rightmost untrusted
+`X-Forwarded-For` entry wins, only plain IP entries are accepted, malformed or
+duplicated headers are ignored, and an unset/empty value (default) trusts no
+proxy while an invalid value stops startup. Prevent clients from bypassing that
+proxy. Without trusted forwarding, users behind one proxy/NAT share the source
+allowance. Configure TLS separately.
 
 ## API keys in the WebUI
 
