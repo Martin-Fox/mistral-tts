@@ -2,6 +2,38 @@
 
 [Documentation](README.md) · [Project overview](../README.md)
 
+## Security audit 2026-11-26 — 1.0.6
+
+This release applies the priority findings of the security/functional audit of
+2026-11-26 (audited base `main@c65d470`; merged as PR #35 from
+`fix/security-audit-2026-11-26`):
+
+- B-01 (partial): the login limiter now also keeps a global per-account counter,
+  so rotating source addresses (including spoofed `X-Forwarded-For`) cannot
+  multiply the 5-attempts-per-account allowance.
+- B-01/B-02: a new `TrustedProxyHeaders` middleware resolves the client address
+  from `X-Forwarded-For` only when the direct peer is inside
+  `TRUSTED_PROXY_CIDRS`; unset/empty (default) trusts nobody, malformed or
+  duplicated headers fail closed, and an invalid value stops startup. The Docker
+  default (`--no-proxy-headers`) is unchanged.
+- B-03: `/api/audio/{filename}` serves a per-extension `Content-Type`
+  (`.mp3` audio/mpeg, `.wav` audio/wav, `.m4b` audio/mp4) instead of always
+  audio/mpeg.
+- B-04: login success/failure/lockout, logout and password changes are logged on
+  the `booksmith.auth` logger with source address and username only — never
+  passwords, session tokens or API keys.
+- B-06: voice-reference decoding applies `RLIMIT_AS`/`RLIMIT_FSIZE`/`RLIMIT_CPU`/
+  `RLIMIT_CORE` via `preexec_fn` on every POSIX platform; Linux keeps the
+  mandatory `prlimit` wrapper.
+
+Verification: `ruff check src tests scripts` clean; full offline suite
+**691 passed, 0 failed** on `main@c65d470` (with ffmpeg/ffprobe in PATH);
+Docker smoke suite **7/7 OK** on the published image. Image
+`marcinlis82/mistral-tts:1.0.6` (linux/amd64), manifest digest
+`sha256:30e6ae038b8311c3eb818d1a88dac3c33fe64283315d60d5b955a0d48dcc0379`;
+`latest` points at the same manifest. Source revision `main@5dae03a`.
+See the [1.0.6 image verification and digest](audit/RELEASE_1.0.6_2026-11-27.md).
+
 ## Security audit remediation — 1.0.5
 
 This release applies the findings of the read-only repository audit of

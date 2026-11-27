@@ -202,12 +202,14 @@ an audio-only FFmpeg 9.0.2 without libxml2; local native tests passed, but this
 stage has not built/published an image or changed the LAN deployment either.
 
 
-### Current authorized release: 1.0.5
+### Current authorized release: 1.0.6
 
-The operator subsequently authorized building and publishing the updated image.
-`marcinlis82/mistral-tts:1.0.5` (and `latest`, pointing at the same manifest) is
-published for linux/amd64; earlier paragraphs record stage-specific verification
-and the older local image. See the
-[1.0.5 release checks and exact digest](audit/RELEASE_1.0.5_2026-11-24.md) and the
+On 2026-11-27 the operator authorized building and publishing the image with the
+2026-11-26 audit findings (PR #35). `marcinlis82/mistral-tts:1.0.6` (and `latest`,
+pointing at the same manifest) is published for linux/amd64 from source revision
+`main@5dae03a`, manifest digest
+`sha256:30e6ae038b8311c3eb818d1a88dac3c33fe64283315d60d5b955a0d48dcc0379`.
+See the [1.0.6 release checks and exact digest](audit/RELEASE_1.0.6_2026-11-27.md),
+the earlier [1.0.5 checks](audit/RELEASE_1.0.5_2026-11-24.md) and the
 [1.0.4 remaining CVEs](audit/RELEASE_1.0.4_2026-11-18.md).
 The LAN deployment has not been changed by publishing this image.

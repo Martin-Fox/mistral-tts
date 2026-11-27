@@ -44,6 +44,7 @@ Dated reports record what was checked at a particular revision or release.
 They do not replace the current guides or establish the state of a running
 installation.
 
+- [1.0.6 image verification and digest](audit/RELEASE_1.0.6_2026-11-27.md).
 - [1.0.5 image verification and digest](audit/RELEASE_1.0.5_2026-11-24.md).
 - [1.0.4 image verification and digest](audit/RELEASE_1.0.4_2026-11-18.md).
 - [November 2026 security audit](audit/SECURITY_AUDIT_2026-11-18.md), followed by

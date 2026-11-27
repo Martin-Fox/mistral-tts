@@ -25,7 +25,7 @@ See [Windows setup and acceptance](docs/WINDOWS.md).
 
 ## Quick start with Docker
 
-The versioned release is `marcinlis82/mistral-tts:1.0.5` for **linux/amd64**.
+The versioned release is `marcinlis82/mistral-tts:1.0.6` for **linux/amd64**.
 Create a private `.env` file in the directory from which you run Docker:
 
 ```dotenv
@@ -41,14 +41,14 @@ Only configure the provider keys you need; translation always requires Mistral.
 Protect the file from other users and do not commit it.
 
 ```bash
-docker pull marcinlis82/mistral-tts:1.0.5
+docker pull marcinlis82/mistral-tts:1.0.6
 mkdir -p storage
 docker run -d \
   -p 127.0.0.1:8000:8000 \
   -v "$PWD/storage:/app/storage" \
   --env-file "$PWD/.env" \
   --name mistral-tts \
-  marcinlis82/mistral-tts:1.0.5
+  marcinlis82/mistral-tts:1.0.6
 ```
 
 Open **http://localhost:8000** and sign in. Storage survives container replacement.
@@ -77,11 +77,11 @@ libraries, Windows acceptance, release history, audits and planned work.
 ## Upgrading and release status
 
 Stop the old instance and back up **all of `storage/`** before upgrading.
-Review [1.0.5 changes](docs/RELEASE_NOTES.md#security-audit-remediation--105)
-for the audit-remediation changes, then follow the
+Review [1.0.6 changes](docs/RELEASE_NOTES.md#security-audit-2026-11-26--106)
+for the 2026-11-26 audit findings, then follow the
 [upgrade procedure](docs/OPERATIONS.md#upgrade-and-rollback).
 
-The [1.0.5 release report](docs/audit/RELEASE_1.0.5_2026-11-24.md) records the
+The [1.0.6 release report](docs/audit/RELEASE_1.0.6_2026-11-27.md) records the
 verified image digest and tests. Offline tests do not establish
 provider access or output quality; native Windows acceptance and some security
 work remain open.
