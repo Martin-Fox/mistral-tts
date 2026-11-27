@@ -116,6 +116,48 @@ def test_missing_prlimit_fails_closed(monkeypatch):
                           'wav', ResourceLimits(), 120, 100000)
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX preexec_fn')
+def test_run_process_async_forwards_preexec_fn(monkeypatch):
+    seen = {}
+    real_exec = asyncio.create_subprocess_exec
+    async def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return await real_exec(*args, **kwargs)
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spy)
+    def marker():
+        return None
+    asyncio.run(run_process_async([sys.executable, '-c', 'pass'], timeout=10, preexec_fn=marker))
+    assert seen.get('preexec_fn') is marker
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX rlimits')
+def test_reference_preexec_is_none_on_linux_and_callable_on_other_posix(monkeypatch):
+    from src.core import voice_reference
+    limits, timeout, output_limit = ResourceLimits(), 120, 100000
+    if sys.platform.startswith('linux'):
+        # Linux is wrapped with prlimit instead (see reference_command).
+        assert voice_reference.reference_preexec(limits, timeout, output_limit) is None
+    monkeypatch.setattr(voice_reference.sys, 'platform', 'darwin')
+    assert callable(voice_reference.reference_preexec(limits, timeout, output_limit))
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX rlimits')
+def test_reference_rlimits_apply_inside_the_child_process():
+    code = (
+        'import resource;'
+        'from src.core.resource_limits import ResourceLimits;'
+        'from src.core.voice_reference import apply_reference_rlimits;'
+        'apply_reference_rlimits(ResourceLimits(max_voice_process_memory_bytes=268435456), 120, 100000);'
+        'print(resource.getrlimit(resource.RLIMIT_AS)[0]);'
+        'print(resource.getrlimit(resource.RLIMIT_CORE)[0])'
+    )
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    soft_as, soft_core = result.stdout.split()
+    assert soft_as == '268435456'
+    assert soft_core == '0'
+
+
 @pytest.mark.skipif(not sys.platform.startswith('linux'), reason='Linux address-space limit')
 def test_hard_memory_budget_applies_to_real_decoder(tmp_path, monkeypatch):
     source = tmp_path / 'sample.wav'

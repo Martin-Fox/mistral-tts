@@ -1,8 +1,83 @@
-"""Origin checks before body reception and browser response protections."""
+"""Origin checks before body reception, trusted-proxy client resolution and
+browser response protections."""
+import ipaddress
+import os
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers, MutableHeaders, URL
 from starlette.responses import JSONResponse
+
+# Bound the accepted X-Forwarded-For chain; longer chains are ignored.
+MAX_FORWARDED_ENTRIES = 16
+
+
+def trusted_proxy_networks(value=None):
+    """Parse TRUSTED_PROXY_CIDRS (comma-separated CIDRs); empty/unset trusts nobody."""
+    raw = os.getenv('TRUSTED_PROXY_CIDRS', '') if value is None else value
+    networks = []
+    for item in raw.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            raise ValueError(
+                'TRUSTED_PROXY_CIDRS must be a comma-separated list of IP networks (e.g. "10.0.0.0/8, 127.0.0.1/32")'
+            ) from None
+    return networks
+
+
+def forwarded_client_address(value, networks):
+    """Return the rightmost X-Forwarded-For entry that is not a trusted proxy.
+
+    Entries must be plain IP addresses; anything malformed fails closed (None),
+    as do chains longer than MAX_FORWARDED_ENTRIES.
+    """
+    entries = [entry.strip() for entry in value.split(',')]
+    if not entries or len(entries) > MAX_FORWARDED_ENTRIES:
+        return None
+    addresses = []
+    for entry in entries:
+        try:
+            addresses.append(ipaddress.ip_address(entry))
+        except ValueError:
+            return None
+    for address in reversed(addresses):
+        if not any(address in network for network in networks):
+            return str(address)
+    # Every hop is a trusted proxy; the leftmost entry is still inside them.
+    return str(addresses[0])
+
+
+class TrustedProxyHeaders:
+    """Rewrite scope["client"] from X-Forwarded-For only when the direct peer
+    is inside TRUSTED_PROXY_CIDRS. Without configuration no header is trusted,
+    so client-supplied forwarding headers cannot spoof the login limiter."""
+
+    def __init__(self, app, networks=lambda: trusted_proxy_networks()):
+        self.app = app
+        self.networks = networks
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] == 'http':
+            client = scope.get('client')
+            if client:
+                networks = self.networks()
+                if networks:
+                    try:
+                        peer = ipaddress.ip_address(client[0])
+                    except ValueError:
+                        peer = None
+                    if peer is not None and any(peer in network for network in networks):
+                        headers = Headers(scope=scope)
+                        forwarded = headers.getlist('x-forwarded-for')
+                        # Duplicate forwarding headers are ambiguous; ignore them.
+                        if len(forwarded) == 1:
+                            address = forwarded_client_address(forwarded[0], networks)
+                            if address is not None:
+                                scope['client'] = (address, client[1])
+        await self.app(scope, receive, send)
 
 
 CONTENT_SECURITY_POLICY = (

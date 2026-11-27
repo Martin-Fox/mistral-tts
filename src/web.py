@@ -30,7 +30,7 @@ from src.core.audio_compiler import AudioCompiler
 from src.core.cache_io import run_blocking_until_done, staged_file
 from src.core.pipeline import prepare_text, run_pipeline, VoiceInput
 from src.core.auth import hash_password, verify_password, load_credentials, save_credentials, password_meets_policy
-from src.web_security import WebSecurity
+from src.web_security import WebSecurity, TrustedProxyHeaders, trusted_proxy_networks
 from src.core.login_limiter import LoginLimiter
 from src.core.task_store import save_job, load_job, task_directory, load_translation, save_translation, validate_task_id, save_cache_reference
 from src.core.storage_retention import StoragePolicy, StorageBudgetExceeded, check_storage_budget, sweep_storage
@@ -65,8 +65,13 @@ Path("storage/output").mkdir(mode=0o700, parents=True, exist_ok=True)
 
 # Set up logging
 logger = logging.getLogger("booksmith")
+# Security events (login success/failure/lockout, logout, password changes).
+# Never log passwords, session tokens or API keys here.
+auth_logger = logging.getLogger("booksmith.auth")
 
 LANG_REGEX = re.compile(r"^[a-zA-Z\s\-]{2,40}$")
+
+AUDIO_MEDIA_TYPES = {'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4b': 'audio/mp4'}
 
 # Authentication configuration (for HTTP Basic Auth)
 AUTH_FILE = Path("storage/auth.json")
@@ -143,6 +148,9 @@ app.add_middleware(GenerationRequestLimits, controller=lambda: job_controller,
                    storage_check=lambda: check_storage_budget(),
                    authenticated=lambda scope: verify_session(Request(scope).cookies.get('session_id')))
 app.add_middleware(WebSecurity)
+# Outermost: rewrite scope["client"] from X-Forwarded-For only when the direct
+# peer is inside TRUSTED_PROXY_CIDRS. Default (unset) trusts nobody.
+app.add_middleware(TrustedProxyHeaders, networks=lambda: trusted_proxy_networks())
 
 
 async def read_upload_bounded(upload: UploadFile, limit: int) -> bytes:
@@ -366,6 +374,7 @@ def _change_password(request: ChangePasswordRequest):
     
     # Verify current password
     if not verify_password(request.current_password, APP_PASSWORD_HASH):
+        auth_logger.warning("Password change rejected: incorrect current password for user %r", APP_USERNAME)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect current password"
@@ -387,7 +396,7 @@ def _change_password(request: ChangePasswordRequest):
         APP_PASSWORD_HASH = new_hash
         active_sessions.clear()
         password_change_sessions.clear()
-        logger.info(f"Password successfully changed for user: {APP_USERNAME}")
+        auth_logger.info("Password changed for user %r; all sessions revoked", APP_USERNAME)
         return {"message": "Password updated successfully. Please log in with your new credentials."}
     except Exception as e:
         logger.error(f"Failed to persist new password: {e}")
@@ -405,27 +414,30 @@ def login(request: LoginRequest, response: Response, http_request: Request):
     source = http_request.client.host if http_request.client else "unknown"
     retry_after = login_limiter.consume(source, request.username)
     if retry_after is not None:
+        auth_logger.warning("Login rate-limited for user %r from %s (retry after %ds)",
+                            request.username, source, retry_after)
         raise HTTPException(
             status_code=429,
             detail="Too many login attempts. Please try again later.",
             headers={"Retry-After": str(retry_after)}
         )
     with auth_lock:
-        return _login(request, response)
+        return _login(request, response, source)
 
 
-def _login(request: LoginRequest, response: Response):
+def _login(request: LoginRequest, response: Response, source: str = "unknown"):
     """
     Verifies credentials and sets a session cookie.
     """
     is_correct_username = secrets.compare_digest(request.username.encode("utf-8"), APP_USERNAME.encode("utf-8"))
     is_correct_password = verify_password(request.password, APP_PASSWORD_HASH)
     if not (is_correct_username and is_correct_password):
+        auth_logger.warning("Login failed for user %r from %s", request.username, source)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
-    
+    auth_logger.info("Login successful for user %r from %s", request.username, source)
     session_id = str(uuid.uuid4())
     session_is_valid(None)  # Evict expired entries before adding a session.
     active_sessions[session_id] = time.monotonic() + SESSION_TTL_SECONDS
@@ -448,9 +460,11 @@ def logout(request: Request, response: Response):
     Clears the session cookie and removes the session from memory.
     """
     session_id = request.cookies.get("session_id")
+    source = request.client.host if request.client else "unknown"
     with auth_lock:
         active_sessions.pop(session_id, None)
         password_change_sessions.discard(session_id)
+    auth_logger.info("Logout from %s", source)
     response.delete_cookie(key="session_id", httponly=True, samesite="lax", secure=SESSION_COOKIE_SECURE)
     return {"message": "Logged out successfully"}
 
@@ -545,7 +559,8 @@ def get_audio(filename: str, session: str = Depends(verify_session)):
         raise HTTPException(status_code=400, detail="Invalid filename")
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(file_path, media_type="audio/mpeg")
+    media_type = AUDIO_MEDIA_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
+    return FileResponse(file_path, media_type=media_type)
 
 @app.get("/api/progress")
 async def get_progress(
@@ -836,6 +851,7 @@ async def startup_event():
     StoragePolicy.from_env()
     process_budget()
     process_budget(probe=True)
+    trusted_proxy_networks()  # Invalid TRUSTED_PROXY_CIDRS stops startup (fail closed).
     limits = ResourceLimits.from_env()
     job_controller = JobController(limits.max_running_jobs, limits.max_queued_jobs)
     configure_sessions()

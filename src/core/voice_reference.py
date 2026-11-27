@@ -9,6 +9,11 @@ import sys
 import tempfile
 import wave
 
+try:
+    import resource
+except ImportError:  # Windows has no resource module.
+    resource = None
+
 from src.core.ffmpeg_utils import get_ffmpeg_path
 from src.core.process_runner import process_budget, run_process_async
 from src.core.resource_limits import ResourceLimits, ResourceLimitExceeded
@@ -61,6 +66,32 @@ def reference_command(binary, source, destination, fmt, limits, timeout, output_
     return command
 
 
+def apply_reference_rlimits(limits, timeout, output_limit):
+    """Hard rlimits inside the decoder child; only used via preexec_fn on POSIX."""
+    address_space = limits.max_voice_process_memory_bytes
+    resource.setrlimit(resource.RLIMIT_AS, (address_space, address_space))
+    if hasattr(resource, 'RLIMIT_FSIZE'):
+        resource.setrlimit(resource.RLIMIT_FSIZE, (output_limit, output_limit))
+    if hasattr(resource, 'RLIMIT_CPU'):
+        cpu = math.ceil(timeout)
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+    if hasattr(resource, 'RLIMIT_CORE'):
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def reference_preexec(limits, timeout, output_limit):
+    """preexec_fn applying the same hard limits on POSIX platforms without prlimit.
+
+    Linux keeps the util-linux prlimit wrapper in reference_command; every other
+    POSIX platform gets at least the RLIMIT_AS address-space budget here.
+    """
+    if resource is None or not hasattr(resource, 'RLIMIT_AS'):
+        return None
+    if sys.platform.startswith('linux'):
+        return None
+    return lambda: apply_reference_rlimits(limits, timeout, output_limit)
+
+
 async def prepare_reference(path: Path) -> bytes:
     """Return only validated normalized audio; never fall back to the original."""
     path = path.resolve(strict=True)
@@ -77,7 +108,8 @@ async def prepare_reference(path: Path) -> bytes:
         command = reference_command(binary, path, destination, fmt, limits, timeout, output_limit)
         try:
             await run_process_async(command, timeout=timeout, env=reference_environment(directory),
-                                    cwd=directory, max_output_bytes=65536)
+                                    cwd=directory, max_output_bytes=65536,
+                                    preexec_fn=reference_preexec(limits, timeout, output_limit))
         except subprocess.CalledProcessError:
             raise ValueError('Voice reference could not be decoded as supported MP3/PCM WAV') from None
         if not destination.is_file() or not 0 < destination.stat().st_size < output_limit:

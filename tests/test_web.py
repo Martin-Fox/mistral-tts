@@ -43,6 +43,17 @@ def test_get_audio_path_traversal_client():
     response2 = client.get("/api/audio/..%2Fstyles.css")
     assert response2.status_code in (400, 404)
 
+def test_get_audio_media_type_matches_extension():
+    """Assert that each supported audio extension is served with its own Content-Type."""
+    os.makedirs("storage/output", exist_ok=True)
+    for name, expected in [("book.mp3", "audio/mpeg"), ("book.wav", "audio/wav"),
+                           ("book.m4b", "audio/mp4"), ("book.MP3", "audio/mpeg")]:
+        with open(f"storage/output/{name}", "wb") as stream:
+            stream.write(b"RIFF")
+        response = client.get(f"/api/audio/{name}")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(expected)
+
 def test_get_progress_not_found():
     """Assert that an invalid task_id returns 404."""
     response = client.get("/api/progress?task_id=non-existent-task-id")

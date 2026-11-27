@@ -101,6 +101,7 @@ The main environment variables are listed below. Full configuration tables are i
 | `MISTRAL_TRANSLATION_MODEL` | Mistral chat model for text translation (default: `ministral-8b-latest`). |
 | `APP_USERNAME` | Custom username for WebUI cookie authentication (default: `admin`). |
 | `APP_PASSWORD` | Required unique password for WebUI cookie authentication; empty values and `admin` are rejected at startup. |
+| `TRUSTED_PROXY_CIDRS` | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` the app trusts for the login limiter (default: empty, no trust). See [WebUI security](docs/WEB_SECURITY.md#login-attempt-limits). |
 
 Without an existing auth file, use 12-1024 characters (at least 12 after trimming)
 before upgrading. Persisted legacy short passwords allow only a password-change

@@ -12,7 +12,7 @@ import pytest
 REPOSITORY = Path(__file__).resolve().parents[1]
 APP_PREFIXES = ('MISTRAL_', 'OPENAI_', 'APP_', 'SESSION_', 'LOGIN_', 'API_',
                 'AUDIO_', 'REQUEST_', 'MAX_', 'STORAGE_', 'CACHE_LOCK_', 'WEB_CONCURRENCY',
-                'INPUT_TEXT_ENCODING', 'BOOKSMITH_ENV_FILE')
+                'TRUSTED_PROXY_', 'INPUT_TEXT_ENCODING', 'BOOKSMITH_ENV_FILE')
 
 
 def _clean_app_environment(*, keep_env_file=False):
